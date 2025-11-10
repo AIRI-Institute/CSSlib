@@ -1,0 +1,20 @@
+{
+  "result_dir": "CsPbI3",
+  "structure_filename": "data/CsPbI3/CsPbI3.cif",
+  "supercell": "2x1x1",
+  "num_workers":  4,
+  "substitution": [
+    {
+      "specie_to_substitute": "Pb",
+      "substitute_with": "Cd",
+      "substitution_low_limit": 0.0,
+      "substitution_high_limit": 0.05
+    },
+    {
+      "specie_to_substitute": "I",
+      "substitute_with": "Br",
+      "substitution_low_limit": 0.0,
+      "substitution_high_limit": 0.06
+    }
+  ]
+}
