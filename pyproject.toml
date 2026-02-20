@@ -1,0 +1,38 @@
+[project]
+name = "csslib"
+version = "1.0.1"
+authors = [
+  { name="A.V. Krautsou" },
+]
+readme = "README.md"
+description = "CSSlib is an open-source code for building configuration search space (CSS) of disordered crystals."
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "jupyter==1.0.0",
+    "matplotlib==3.10.7",
+    "numpy==1.26.4",
+    "pandas==2.3.2",
+    "plotly==6.3.1",
+    "pymatgen==2025.6.14",
+    "pymatgen-analysis-defects==2025.1.18",
+    "scipy==1.15.3",
+    "tqdm==4.67.1",
+    "networkx==3.4.2"
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# [tool.setuptools]
+# packages = []
+
+# [project.optional-dependencies]
+# dev = [
+#    "pytest",
+#    "mypy",
+#]
