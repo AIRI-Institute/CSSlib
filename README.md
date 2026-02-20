@@ -12,7 +12,7 @@ Installation
 
 Tutorial
 -----
-The best way to learn how to use **CSSlib** is through the [tutorial notebook](csslib_example.ipynb).
+The best way to learn how to use **CSSlib** is through the [tutorial notebook](tests/csslib_example.ipynb).
 
 References & Citing
 -----
