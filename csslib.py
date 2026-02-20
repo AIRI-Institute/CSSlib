@@ -4,39 +4,43 @@ import os
 import json
 from tqdm import tqdm
 import pandas as pd
-import numpy as np
 from copy import deepcopy
 import zipfile
 import re
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import subprocess
 from pymatgen.core import Structure
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.cif import CifParser, CifBlock
 from pymatgen.analysis.defects.generators import VoronoiInterstitialGenerator
-from pymatgen.symmetry.groups import SpaceGroup
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
-import networkx as nx
 import warnings
+from config_logging import get_main_logger, get_supercell_worker_logger, get_collect_worker_logger
+import sys
 
 warnings.filterwarnings("ignore")
 
 
 class CSS:
     _RESULTS_DIR = "results"
-    _SUPERCELL_INPUT_CIFS_DIR = "supercell_input_cifs"
-    _SUPERCELL_OUTPUT_DIR = "supercell_output"
+    _SUPERCELL_INPUT_CIFS_DIR = "disordered_structures"
+    _SUPERCELL_OUTPUT_DIR = "ordered_representations"
+    _ORDERED_REPRESENTATIONS_METADATA_DIR = "ordered_representations_metadata"
 
     def __init__(self, config_filename: str) -> None:
         with open(config_filename) as f:
             self.config = json.load(f)
+        self._result_path = os.path.join(self._RESULTS_DIR, self.config["result_dir"])
+        self._supercell_input_cifs_path = os.path.join(self._result_path, self._SUPERCELL_INPUT_CIFS_DIR)
+        self._supercell_output_path = os.path.join(self._result_path, self._SUPERCELL_OUTPUT_DIR)
+        self._ordered_representations_metadata_path = os.path.join(self._result_path,
+                                                                   self._ORDERED_REPRESENTATIONS_METADATA_DIR)
         os.makedirs(self._RESULTS_DIR, exist_ok=True)
-        os.makedirs(os.path.join(self._RESULTS_DIR, self.config["result_dir"]))
+        os.makedirs(self._result_path)
         self._parser_data = None
         self._structure_sym = None
         self._scale_factor = 0
+        self.logger = get_main_logger(self._result_path)
 
     def read_structure(self) -> None:
         """
@@ -45,25 +49,29 @@ class CSS:
         """
 
         structure = Structure.from_file(self.config["structure_filename"])
+        self.logger.info("Initial structure is read.")
         finder = SpacegroupAnalyzer(structure)
         self._structure_sym = finder.get_symmetrized_structure()
-        self._structure_sym.to(os.path.join(self._RESULTS_DIR, self.config["result_dir"], "css_temp.cif"),
-                               fmt="cif", symprec=True, refine_struct=True)
-        parser = CifParser(os.path.join(self._RESULTS_DIR, self.config["result_dir"], "css_temp.cif"))
+        self._structure_sym.to(os.path.join(self._result_path, "css_temp.cif"),
+                               fmt="cif",
+                               symprec=True,
+                               refine_struct=True)
+        parser = CifParser(os.path.join(self._result_path, "css_temp.cif"))
         self._parser_data = next(iter(parser._cif.data.values()))
-        os.remove(os.path.join(self._RESULTS_DIR, self.config["result_dir"], "css_temp.cif"))
+        os.remove(os.path.join(self._result_path, "css_temp.cif"))
 
     def generate_interstitial_structure(self) -> None:
         """
         Generate interstitial structure using Voronoi algorithm and save it to a cif-file.
-        Interstitial sites are filled by deuterium species.
+        Interstitial sites are filled by Neptunium species.
         :return: None.
         """
 
+        self.logger.info("Preparing to generate interstitial structure.")
         interstitial_generator = VoronoiInterstitialGenerator()
-        for i, interstitial in enumerate(interstitial_generator.generate(self._structure_sym, {"D", })):
-            self._parser_data["_atom_site_type_symbol"].append("D")
-            self._parser_data["_atom_site_label"].append(f"D{i}")
+        for i, interstitial in enumerate(interstitial_generator.generate(self._structure_sym, {"Np", })):
+            self._parser_data["_atom_site_type_symbol"].append("Np")
+            self._parser_data["_atom_site_label"].append(f"Np{i}")
             self._parser_data["_atom_site_symmetry_multiplicity"].append(str(interstitial.multiplicity))
             self._parser_data["_atom_site_fract_x"].append(f"{interstitial.site.frac_coords[0]:.7f}")
             self._parser_data["_atom_site_fract_y"].append(f"{interstitial.site.frac_coords[1]:.7f}")
@@ -72,14 +80,16 @@ class CSS:
 
         interstitial_structure_filename = self._create_interstitial_structure_filename()
         self._save_structure(self._parser_data, interstitial_structure_filename)
+        self.logger.info("Interstitial structure is generated and saved at %s.", self._result_path)
 
     def generate_substituted_disordered_structures(self) -> None:
         """
-        Generate substituted disordered structures with partial occupancies according to the configuration file.
+        Generate substituted disordered structures (with partial occupancies) according to the configuration file.
         Save them to a cif-files.
         :return: None.
         """
 
+        self.logger.info("Preparing to generate disordered structures (with partial occupancies) ...")
         cell_natoms = sum(map(int, self._parser_data["_atom_site_symmetry_multiplicity"]))
         self._scale_factor = prod(map(int, self.config["supercell"].split("x")))
         supercell_natoms = cell_natoms * self._scale_factor
@@ -108,7 +118,7 @@ class CSS:
             else:
                 subst_natoms_list.append(subst_natoms)
 
-        os.makedirs(os.path.join(self._RESULTS_DIR, self.config["result_dir"], self._SUPERCELL_INPUT_CIFS_DIR))
+        os.makedirs(self._supercell_input_cifs_path)
 
         for subst_natoms in subst_natoms_list:
             p_data = deepcopy(self._parser_data)
@@ -141,10 +151,14 @@ class CSS:
             else:
                 supercell_structure_filename = self._create_supercell_structure_filename(p_data)
                 self._save_structure(p_data, self._SUPERCELL_INPUT_CIFS_DIR, supercell_structure_filename)
+                self.logger.debug("%s disordered structure (with partial occupancies) is generated and saved.",
+                                  supercell_structure_filename)
+        self.logger.info("%d disordered structures (with partial occupancies) are generated and saved at %s.",
+                         len(os.listdir(self._supercell_input_cifs_path)), self._supercell_input_cifs_path)
 
     def _create_supercell_structure_filename(self, parser_data: CifBlock) -> str:
         """
-        Create a filename for disordered supercell structure.
+        Create a filename for disordered structure (with partial occupancies).
         :param parser_data: Structural data to save.
         :return: Filename.
         """
@@ -162,7 +176,7 @@ class CSS:
         :return: Filename.
         """
 
-        return self.config["structure_filename"].replace(".cif", "") + "_interstitial" + ".cif"
+        return os.path.splitext(os.path.split(self.config["structure_filename"])[1])[0] + "_interstitial" + ".cif"
 
     def _save_structure(self, parser_data: CifBlock, *args: str) -> None:
         """
@@ -172,165 +186,201 @@ class CSS:
         :return: None.
         """
 
-        with open(os.path.join(self._RESULTS_DIR, self.config["result_dir"], *args), "w") as f:
+        with open(os.path.join(self._result_path, *args), "w") as f:
             f.write(str(parser_data))
 
     @staticmethod
-    def _supercell_worker(cmd: str) -> None:
+    def _init_supercell_worker(result_path: str) -> None:
         """
-        Run a command (a process with Supercell software instance).
+        Configure logger for supercell worker.
+        :param result_path: Path to the results' directory.
+        :return: None.
+        """
+
+        logger_ = get_supercell_worker_logger(result_path)
+        global supercell_worker_logger
+        supercell_worker_logger = logger_
+
+    @staticmethod
+    def _supercell_worker(cmd: str, compound: str) -> int:
+        """
+        Run a Supercell worker (a process with Supercell software instance).
         :param cmd: Command to run.
         :return: None.
         """
 
-        subprocess.run(cmd, shell=True)
+        worker_result = subprocess.run(cmd, shell=True, text=True, encoding="utf-8", capture_output=True)
+        if worker_result.returncode == 0:
+            num_struct_before = re.search(r"The total number of combinations is (\d+)", worker_result.stdout).group(1)
+            num_struct_after = re.search(r"Combinations after merge: (\d+)", worker_result.stdout).group(1)
+            supercell_worker_logger.info("%s - DONE! - The total number of structures: %s - Symmetrically inequivalent structures: %s",
+                                         compound, num_struct_before, num_struct_after)
+        else:
+            supercell_worker_logger.info("%s - FAILED! - %s", compound, worker_result.stderr)
+        return worker_result.returncode
 
     def run_supercell(self) -> None:
         """
-        Run Supercell software to convert a crystallographic structures with partial occupancies and/or vacancies
-        to ordinary supercell structures.
+        Run Supercell software to convert disordered structures (with partial occupancies)
+        to ordered representations (supercell structures).
         :return: None.
         """
 
-        commands = [f"supercell -i {os.path.join(self._RESULTS_DIR, self.config['result_dir'], self._SUPERCELL_INPUT_CIFS_DIR, supercell_structure_filename)} -m "
-                    f"-s {self.config['supercell']} "
-                    f"-a {os.path.join(self._RESULTS_DIR, self.config['result_dir'], self._SUPERCELL_OUTPUT_DIR, supercell_structure_filename.replace('.cif', ''))}.zip "
-                    f"-o {supercell_structure_filename.replace('.cif', '')}" for supercell_structure_filename
-                    in os.listdir(os.path.join(self._RESULTS_DIR, self.config["result_dir"],
-                                               self._SUPERCELL_INPUT_CIFS_DIR))]
-        os.makedirs(os.path.join(self._RESULTS_DIR, self.config["result_dir"], self._SUPERCELL_OUTPUT_DIR))
-        with ProcessPoolExecutor(max_workers=self.config["num_workers"]) as pool:
-            with tqdm(desc="Creating disordered structures", unit=" composition", ncols=100) as pbar:
-                for cmd in commands:
-                    future = pool.submit(self._supercell_worker, cmd)
-                    future.add_done_callback(lambda p: pbar.update())
+        self.logger.info("Preparing to check out possibility of creation ordered representations of disordered structures ...")
+        if (error_message := self._dry_run_supercell()) is not None:
+            self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())
+            sys.exit(1)
+        self.logger.info("Checking out possibility of creation ordered representations of disordered structures is finished successfully!")
+        self.logger.info("Preparing to generate ordered representations of disordered structures ...")
+        os.makedirs(self._supercell_output_path)
+        futures = []
+        with (tqdm(range(len(os.listdir(self._supercell_input_cifs_path))),
+                   desc="Creating ordered representations of disordered structures",
+                   unit=" composition",
+                   ncols=200)
+              as pbar,
+              ProcessPoolExecutor(max_workers=self.config["num_workers"],
+                                  initializer=self._init_supercell_worker,
+                                  initargs=(self._result_path,))
+              as pool):
+            for supercell_structure_filename in os.listdir(self._supercell_input_cifs_path):
+                cmd = f"supercell -i {os.path.join(self._supercell_input_cifs_path, supercell_structure_filename)} -m "\
+                      f"-s {self.config['supercell']} "\
+                      f"-a {os.path.join(self._supercell_output_path, supercell_structure_filename.replace('.cif', ''))}.zip "\
+                      f"-o {supercell_structure_filename.replace('.cif', '')}"
+                compound = supercell_structure_filename.replace('.cif', '')
+                future = pool.submit(self._supercell_worker, cmd, compound)
+                future.add_done_callback(lambda p: pbar.update())
+                futures.append(future)
 
-    def collect_data(self) -> None:
-        """
-        Collect data from the output of Supercell software to a pandas dataframe and save it to a pickle-file.
-        :return: None.
-        """
-
-        data_dict = {"cif_data": [], "structure_filename": [], "composition": [],
-                     "space_group_no": [], "space_group_symbol": [], "weight": []}
-        substitute_with_species = {subst['substitute_with'] for subst in self.config["substitution"]}
-        for specie in substitute_with_species:
-            data_dict[f"{specie}_concentration"] = []
-        for archive_filename in tqdm(os.listdir(os.path.join(self._RESULTS_DIR, self.config["result_dir"],
-                                                             self._SUPERCELL_OUTPUT_DIR)),
-                                     desc="Collecting disordered structures",
-                                     unit=" composition",
-                                     ncols=100):
-            with zipfile.ZipFile(os.path.join(self._RESULTS_DIR, self.config["result_dir"],
-                                              self._SUPERCELL_OUTPUT_DIR, archive_filename), "r") as archive:
-                for structure_filename in archive.namelist():
-                    with archive.open(structure_filename, "r") as file:
-                        file_data = file.read().decode("utf-8")
-                        structure = CifParser.from_str(file_data).get_structures(primitive=False)[0]
-                        finder = SpacegroupAnalyzer(structure)
-                        specie_counter = Counter(map(str, structure.species))
-                        data_dict["cif_data"].append(file_data)
-                        data_dict["structure_filename"].append(structure_filename.replace(".zip", ""))
-                        data_dict["composition"].append(str(structure.composition))
-                        data_dict["space_group_no"].append(int(finder.get_space_group_number()))
-                        data_dict["space_group_symbol"].append(finder.get_space_group_symbol())
-                        data_dict["weight"].append(int(re.search(r"_w(.*?).cif", structure_filename).group(1)))
-                        for specie in substitute_with_species:
-                            data_dict[f"{specie}_concentration"].append(specie_counter[specie] / len(structure))
-
-        data_df = pd.DataFrame.from_dict(data_dict)
-        data_df.reset_index(inplace=True, drop=True)
-        data_df.to_pickle(os.path.join(self._RESULTS_DIR, self.config["result_dir"], "data.pkl.gz"))
+            num_failed_tasks = 0
+            for future in as_completed(futures):
+                num_failed_tasks += future.result() != 0
+        self.logger.info("Ordered representations of disordered structures are generated and saved at %s.",
+                         self._supercell_output_path)
+        if num_failed_tasks:
+            self.logger.info("Generation of ordered representations of disordered structures is failed for %d compound(s)!", num_failed_tasks)
+        else:
+            self.logger.info("Generation of ordered representations of disordered structures is finished successfully!")
 
     @staticmethod
-    def _spaceGroupConventional(sg: str) -> str:
+    def _dry_supercell_worker(cmd: str) -> str | None:
         """
-        Convert a space group symbol to a conventional form.
-        :param sg: Space group symbol.
-        :return: Formatted space group symbol.
+        Run a Supercell worker (a process with Supercell software instance) in dry-run mode
+        to check the possibility of creation ordered representations of disordered structures.
+        :param cmd: Command to run.
+        :return: Error message if something went wrong, None otherwise.
         """
 
-        sg = re.sub("-[\d]", lambda x: "\\bar{" + x.group()[1:] + "}", sg)
-        return f"${sg}$"
+        worker_result = subprocess.run(cmd, shell=True, text=True, encoding="utf-8", capture_output=True)
+        if worker_result.returncode == 0:
+            return None
+        return worker_result.stderr
 
-    def plot_group_subgroup_graph(self, node_size: int = 1200) -> None:
+    def _dry_run_supercell(self) -> str | None:
         """
-        Plot the group-subgroup graph.
+        Check the possibility of creation ordered representations of disordered structures.
+        :return: None if the possibility exists, error message otherwise.
+        """
+
+        futures = []
+        with tqdm(range(len(os.listdir(self._supercell_input_cifs_path))),
+                  desc="Checking out possibility of creation ordered representations of disordered structures",
+                  unit=" composition",
+                  ncols=200) as pbar:
+            pool = ProcessPoolExecutor(max_workers=self.config["num_workers"])
+            for supercell_structure_filename in os.listdir(self._supercell_input_cifs_path):
+                cmd = f"supercell -i {os.path.join(self._supercell_input_cifs_path, supercell_structure_filename)} "\
+                      f"-s {self.config['supercell']} -d -v 0"
+                future = pool.submit(self._dry_supercell_worker, cmd)
+                future.add_done_callback(lambda p: pbar.update())
+                futures.append(future)
+            for future in as_completed(futures):
+                if (error_message := future.result()) is not None:
+                    pool.shutdown(wait=True, cancel_futures=True)
+                    return error_message
+            else:
+                pool.shutdown(wait=True, cancel_futures=False)
+                return None
+
+    @staticmethod
+    def _init_collect_worker(fields: tuple, substitute_with_species: tuple,
+                             ordered_representations_metadata_path: str, result_path: str) -> None:
+        """
+        Initialize collect workers.
+        :param fields: Names of dataframe columns where metadata collected.
+        :param substitute_with_species: Species that were used as substitutes.
+        :param ordered_representations_metadata_path: Path to ordered representations of disordered structures.
+        :param result_path: Path to the results' directory.
         :return: None.
         """
 
-        css_df = pd.read_pickle(os.path.join(self._RESULTS_DIR, self.config["result_dir"], "data.pkl.gz"))
-        with open("venv/Lib/site-packages/pymatgen/symmetry/symm_data.json", "r") as f:
-            symm_data = json.load(f)
-        symm_data_subg = symm_data["maximal_subgroups"]
-        symm_data_abbr = {v: k for k, v in symm_data["abbreviated_spacegroup_symbols"].items()}
+        global fields_, substitute_with_species_, ordered_representations_metadata_path_, collect_worker_logger_
+        fields_ = fields
+        substitute_with_species_ = substitute_with_species
+        ordered_representations_metadata_path_ = ordered_representations_metadata_path
+        logger = get_collect_worker_logger(result_path)
+        collect_worker_logger_ = logger
 
-        sgs = sorted(css_df["space_group_no"].unique(), reverse=True)
-        sg_info = {sg: ((css_df["space_group_no"] == sg).sum(),
-                        symm_data_abbr.get(SpaceGroup.from_int_number(sg).symbol,
-                                           SpaceGroup.from_int_number(sg).symbol))
-                   for sg in sgs}
-        sg_info2 = {i[1]: i[0] for i in sg_info.values()}
-        label_map_black = {v[1]: self._spaceGroupConventional(v[1]) + f"\n({k})" for k, v in sg_info.items() if
-                           np.log10(v[0]) >= np.log10(max(sg_info2.values())) / 3}
-        label_map_white = {v[1]: self._spaceGroupConventional(v[1]) + f"\n({k})" for k, v in sg_info.items() if
-                           np.log10(v[0]) < np.log10(max(sg_info2.values())) / 3}
+    @staticmethod
+    def _collect_data_one_composition(archive_path: str) -> None:
+        """
+        Collect meta-information about one particular composition.
+        :param archive_path: Path to archive containing ordered representations of disordered structure.
+        :return: None.
+        """
 
-        graph = nx.DiGraph()
-        for i in range(len(sgs)):
-            for j in range(len(sgs)):
-                if sgs[j] in symm_data_subg[str(sgs[i])] and i != j:
-                    graph.add_edge(sg_info[sgs[i]][1], sg_info[sgs[j]][1])
+        ordered_representations_metadata = {key: [] for key in fields_}
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            for structure_filename in archive.namelist():
+                with archive.open(structure_filename, "r") as file:
+                    file_data = file.read().decode("utf-8")
+                    structure = CifParser.from_str(file_data).get_structures(primitive=False)[0]
+                    finder = SpacegroupAnalyzer(structure)
+                    specie_counter = Counter(map(str, structure.species))
+                    ordered_representations_metadata["cif_data"].append(file_data)
+                    ordered_representations_metadata["structure_filename"].append(structure_filename.replace(".zip", ""))
+                    ordered_representations_metadata["composition"].append(str(structure.composition))
+                    ordered_representations_metadata["space_group_no"].append(int(finder.get_space_group_number()))
+                    ordered_representations_metadata["space_group_symbol"].append(finder.get_space_group_symbol())
+                    ordered_representations_metadata["weight"].append(int(re.search(r"_w(.*?).cif", structure_filename).group(1)))
+                    for specie in substitute_with_species_:
+                        ordered_representations_metadata[f"{specie}_concentration"].append(specie_counter[specie] / len(structure))
+        ordered_representations_metadata_df = pd.DataFrame.from_dict(ordered_representations_metadata)
+        ordered_representations_metadata_path = os.path.join(ordered_representations_metadata_path_,
+                                                             os.path.splitext(os.path.split(archive_path)[1])[0] + ".pkl.gz")
+        ordered_representations_metadata_df.to_pickle(ordered_representations_metadata_path)
+        collect_worker_logger_.info(
+            "%s - DONE! - The total number of structures: %d",
+            os.path.splitext(os.path.split(archive_path)[1])[0], ordered_representations_metadata_df.shape[0])
 
-        not_connected_nodes = set(graph.nodes) - set([i[1] for i in graph.edges])
-        for node2 in not_connected_nodes:
-            for node1 in graph.nodes:
-                if SpaceGroup(node2).is_subgroup(SpaceGroup(node1)):
-                    graph.add_edge(node1, node2)
-                    break
+    def collect_data_mp(self) -> None:
+        """
+        Collect meta-information about all ordered representations of disordered structures
+        and save it to pandas dataframes.
+        :return: None.
+        """
 
-        nodes = [i for i in graph.nodes]
-        orders = np.array([SpaceGroup(nodes[i]).order for i in range(len(nodes))])
-        pos_x = [0] * len(nodes)
-        unique, counts = np.unique(orders, return_counts=True)
-        for count_pos in range(len(counts)):
-            for i in range(counts[count_pos]):
-                pos_x[np.where(orders == unique[count_pos])[0][i]] = (i + 1) / (counts[count_pos] + 1)
-        orders_unique = np.sort(np.unique(orders))
-        orders_dict = {orders_unique[i].item(): i for i in range(orders_unique.shape[0])}
-        pos = {nodes[i]: (pos_x[i], orders_dict[orders[i]]) for i in range(len(nodes))}
-
-        edges_curved = set()  # It can be happened that some edges are not shown because of
-        # overlapping. One can curve them manually to avoid this.
-        edges_straight = set(graph.edges) - edges_curved
-
-        fig, ax = plt.subplots(figsize=(15, 10))
-        cmap = "viridis"
-        nx.draw_networkx_nodes(graph, pos, node_color=[np.log(sg_info2[i]) for i in graph.nodes], node_size=node_size,
-                               edgecolors="black", linewidths=1, cmap=cmap, vmin=0,
-                               vmax=np.log(max([i for i in sg_info2.values()])), ax=ax)
-        nx.draw_networkx_labels(graph, pos, labels=label_map_black, font_size=6, font_color="black")
-        nx.draw_networkx_labels(graph, pos, labels=label_map_white, font_size=6, font_color="white")
-        nx.draw_networkx_edges(graph, pos, edgelist=edges_straight, edge_color="grey", node_size=node_size, width=1,
-                               arrowsize=12, ax=ax)
-        nx.draw_networkx_edges(graph, pos, edgelist=edges_curved, edge_color="grey", width=1, node_size=node_size,
-                               arrowsize=12, connectionstyle='arc3, rad = -0.1', ax=ax)
-        ax.tick_params(left=True, labelleft=True)
-        ax.set_ylabel("Space group order", fontsize=12)
-        ax.set_yticks(range(orders_unique.shape[0]))
-        ax.set_yticklabels(list(map(str, orders_unique)), fontsize=12)
-        ax.yaxis.set_tick_params(labelsize=12)
-
-        cax = fig.add_axes([ax.get_position().x1 + 0.03, ax.get_position().y0 - 0.05, 0.02,
-                            ax.get_position().y1 - ax.get_position().y0 + 0.1])
-
-        sm = plt.cm.ScalarMappable(cmap=cmap,
-                                   norm=plt.Normalize(vmin=0, vmax=np.log10(max([i for i in sg_info2.values()]))))
-        sm.set_array([])
-        cbar = fig.colorbar(sm, aspect=70, cax=cax)
-        cbar.ax.set_ylabel("lg (number of inequivalent structures)", fontsize=12)
-        cbar.ax.yaxis.set_tick_params(labelsize=12)
-        cbar.ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-        cbar.outline.set_visible(False)
-        plt.tight_layout()
-        plt.show()
+        self.logger.info("Preparing to collect ordered representations' metadata ...")
+        substitute_with_species = tuple({subst['substitute_with'] for subst in self.config["substitution"]})
+        fields = ["cif_data", "structure_filename", "composition", "space_group_no", "space_group_symbol", "weight"]
+        for specie in substitute_with_species:
+            fields.append(f"{specie}_concentration")
+        fields = tuple(fields)
+        os.makedirs(self._ordered_representations_metadata_path)
+        archive_paths = [os.path.join(self._supercell_output_path, archive_filename)
+                         for archive_filename in os.listdir(self._supercell_output_path)]
+        with (tqdm(range(len(os.listdir(self._supercell_output_path))),
+                   desc="Collecting ordered representations' metadata of disordered structures",
+                   unit=" composition",
+                   ncols=200)
+              as pbar,
+              ProcessPoolExecutor(max_workers=self.config["num_workers"],
+                                  initializer=self._init_collect_worker,
+                                  initargs=(fields, substitute_with_species, self._ordered_representations_metadata_path, self._result_path))
+              as pool):
+            for archive_path in archive_paths:
+                future = pool.submit(self._collect_data_one_composition, archive_path)
+                future.add_done_callback(lambda p: pbar.update())
+        self.logger.info("Ordered representations' metadata are collected and saved at %s.",
+                         self._ordered_representations_metadata_path)
