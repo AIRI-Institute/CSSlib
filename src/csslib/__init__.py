@@ -15,7 +15,7 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.cif import CifParser, CifBlock
 from pymatgen.analysis.defects.generators import VoronoiInterstitialGenerator
 import warnings
-from config_logging import get_main_logger, get_supercell_worker_logger, get_collect_worker_logger
+from csslib.config_logging import get_main_logger, get_supercell_worker_logger, get_collect_worker_logger
 import sys
 
 warnings.filterwarnings("ignore")
