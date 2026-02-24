@@ -3,7 +3,7 @@ import pandas as pd
 import json
 import re
 import numpy as np
-from pymatgen.symmetry.groups import SpaceGroup
+from pymatgen.symmetry.groups import SpaceGroup, SYMM_DATA
 from matplotlib.ticker import MaxNLocator
 import networkx as nx
 
@@ -25,8 +25,7 @@ def plot_group_subgroup_graph(css_df: pd.DataFrame, node_size: int = 1200) -> No
     :return: None.
     """
 
-    with open("venv/Lib/site-packages/pymatgen/symmetry/symm_data.json", "r") as f:
-        symm_data = json.load(f)
+    symm_data = SYMM_DATA
     symm_data_subg = symm_data["maximal_subgroups"]
     symm_data_abbr = {v: k for k, v in symm_data["abbreviated_spacegroup_symbols"].items()}
 
