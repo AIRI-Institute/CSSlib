@@ -48,7 +48,7 @@ class CSS:
         :return: None.
         """
 
-        structure = Structure.from_file(self.config["structure_filename"])
+        structure = Structure.from_file(self.config["structure_filename"]) # TODO: raise smart exeption when file is not found. Exmpl., StructureNotFoundError: check structure_filename field in the configuration file
         self.logger.info("Initial structure is read.")
         finder = SpacegroupAnalyzer(structure)
         self._structure_sym = finder.get_symmetrized_structure()
@@ -60,7 +60,7 @@ class CSS:
         self._parser_data = next(iter(parser._cif.data.values()))
         os.remove(os.path.join(self._result_path, "css_temp.cif"))
 
-    def generate_interstitial_structure(self) -> None:
+    def generate_interstitial_structure(self) -> None: # TODO: implement smart-exceptions
         """
         Generate interstitial structure using Voronoi algorithm and save it to a cif-file.
         Interstitial sites are filled by Neptunium species.
@@ -82,7 +82,7 @@ class CSS:
         self._save_structure(self._parser_data, interstitial_structure_filename)
         self.logger.info("Interstitial structure is generated and saved at %s.", self._result_path)
 
-    def generate_substituted_disordered_structures(self) -> None:
+    def generate_substituted_disordered_structures(self) -> None: # TODO: implement smart-exceptions
         """
         Generate substituted disordered structures (with partial occupancies) according to the configuration file.
         Save them to a cif-files.
@@ -384,3 +384,6 @@ class CSS:
                 future.add_done_callback(lambda p: pbar.update())
         self.logger.info("Ordered representations' metadata are collected and saved at %s.",
                          self._ordered_representations_metadata_path)
+
+    def __repr__(self):
+        ... # TODO: implement repr method for more informative output about class object
