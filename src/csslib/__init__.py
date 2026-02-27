@@ -1,6 +1,7 @@
 from math import prod
 from itertools import product
 import os
+import sys
 import json
 from tqdm import tqdm
 import pandas as pd
@@ -16,7 +17,8 @@ from pymatgen.io.cif import CifParser, CifBlock
 from pymatgen.analysis.defects.generators import VoronoiInterstitialGenerator
 import warnings
 from csslib.config_logging import get_main_logger, get_supercell_worker_logger, get_collect_worker_logger
-import sys
+from csslib.config import Config
+
 
 warnings.filterwarnings("ignore")
 
@@ -28,9 +30,11 @@ class CSS:
     _ORDERED_REPRESENTATIONS_METADATA_DIR = "ordered_representations_metadata"
 
     def __init__(self, config_filename: str) -> None:
-        with open(config_filename) as f:
-            self.config = json.load(f)
-        self._result_path = os.path.join(self._RESULTS_DIR, self.config["result_dir"])
+        json_data = None
+        with open(config_filename, 'rb') as f:
+            json_data = f.read()
+        self.config = Config.model_validate_json(json_data)
+        self._result_path = os.path.join(self._RESULTS_DIR, self.config.result_dir)
         self._supercell_input_cifs_path = os.path.join(self._result_path, self._SUPERCELL_INPUT_CIFS_DIR)
         self._supercell_output_path = os.path.join(self._result_path, self._SUPERCELL_OUTPUT_DIR)
         self._ordered_representations_metadata_path = os.path.join(self._result_path,
@@ -48,7 +52,7 @@ class CSS:
         :return: None.
         """
 
-        structure = Structure.from_file(self.config["structure_filename"]) # TODO: raise smart exeption when file is not found. Exmpl., StructureNotFoundError: check structure_filename field in the configuration file
+        structure = Structure.from_file(self.config.structure_filename) # TODO: raise smart exeption when file is not found. Exmpl., StructureNotFoundError: check structure_filename field in the configuration file
         self.logger.info("Initial structure is read.")
         finder = SpacegroupAnalyzer(structure)
         self._structure_sym = finder.get_symmetrized_structure()
@@ -91,29 +95,26 @@ class CSS:
 
         self.logger.info("Preparing to generate disordered structures (with partial occupancies) ...")
         cell_natoms = sum(map(int, self._parser_data["_atom_site_symmetry_multiplicity"]))
-        self._scale_factor = prod(map(int, self.config["supercell"].split("x")))
+        self._scale_factor = prod(map(int, self.config.supercell.split("x")))
         supercell_natoms = cell_natoms * self._scale_factor
 
-        for subst in self.config["substitution"]:
-            subst["substitution_low_limit_natoms"] = (int(subst["substitution_low_limit"] *
-                                                          supercell_natoms + 0.001))
-            subst["substitution_high_limit_natoms"] = (int(subst["substitution_high_limit"] *
-                                                           supercell_natoms + 0.001))
-            subst["indices_to_substitute"] = [j for j in range(len(self._parser_data["_atom_site_type_symbol"]))
-                                              if self._parser_data["_atom_site_type_symbol"][j] ==
-                                              subst["specie_to_substitute"]]
+        for subst in self.config.substitution:
+            subst.substitution_low_limit_natoms = (int(subst.substitution_low_limit * supercell_natoms + 0.001))
+            subst.substitution_high_limit_natoms = (int(subst.substitution_high_limit * supercell_natoms + 0.001))
+            subst.indices_to_substitute = [j for j in range(len(self._parser_data["_atom_site_type_symbol"]))
+                                           if self._parser_data["_atom_site_type_symbol"][j] == subst.specie_to_substitute]
 
         subst_natoms_list = []
-        product_range = range(1 + max([subst["substitution_high_limit_natoms"]
-                                       for subst in self.config["substitution"]]))
-        product_repeat = sum([len(subst["indices_to_substitute"]) for subst in self.config["substitution"]])
+        product_range = range(1 + max([subst.substitution_high_limit_natoms
+                                       for subst in self.config.substitution]))
+        product_repeat = sum([len(subst.indices_to_substitute) for subst in self.config.substitution])
 
         for subst_natoms in product(product_range, repeat=product_repeat):
             idx_right = 0
-            for subst in self.config["substitution"]:
+            for subst in self.config.substitution:
                 idx_left = idx_right
-                idx_right += len(subst["indices_to_substitute"])
-                if sum(subst_natoms[idx_left: idx_right]) > subst["substitution_high_limit_natoms"]:
+                idx_right += len(subst.indices_to_substitute)
+                if sum(subst_natoms[idx_left: idx_right]) > subst.substitution_high_limit_natoms:
                     break
             else:
                 subst_natoms_list.append(subst_natoms)
@@ -123,24 +124,24 @@ class CSS:
         for subst_natoms in subst_natoms_list:
             p_data = deepcopy(self._parser_data)
             k = 0
-            indices_to_substitute_occup = {i: 1.0 for subst in self.config["substitution"]
-                                           for i in subst["indices_to_substitute"]}
-            for subst in self.config["substitution"]:
-                for j in range(len(subst["indices_to_substitute"])):
-                    p_data["_atom_site_type_symbol"].append(subst["substitute_with"])
-                    p_data["_atom_site_label"].append(subst["substitute_with"] + str(k))
+            indices_to_substitute_occup = {i: 1.0 for subst in self.config.substitution
+                                           for i in subst.indices_to_substitute}
+            for subst in self.config.substitution:
+                for j in range(len(subst.indices_to_substitute)):
+                    p_data["_atom_site_type_symbol"].append(subst.substitute_with)
+                    p_data["_atom_site_label"].append(subst.substitute_with + str(k))
                     p_data["_atom_site_symmetry_multiplicity"].append(
-                        p_data["_atom_site_symmetry_multiplicity"][subst["indices_to_substitute"][j]])
+                        p_data["_atom_site_symmetry_multiplicity"][subst.indices_to_substitute[j]])
                     p_data["_atom_site_fract_x"].append(
-                        p_data["_atom_site_fract_x"][subst["indices_to_substitute"][j]])
+                        p_data["_atom_site_fract_x"][subst.indices_to_substitute[j]])
                     p_data["_atom_site_fract_y"].append(
-                        p_data["_atom_site_fract_y"][subst["indices_to_substitute"][j]])
+                        p_data["_atom_site_fract_y"][subst.indices_to_substitute[j]])
                     p_data["_atom_site_fract_z"].append(
-                        p_data["_atom_site_fract_z"][subst["indices_to_substitute"][j]])
+                        p_data["_atom_site_fract_z"][subst.indices_to_substitute[j]])
                     new_atom_site_occupancy = (subst_natoms[k] / self._scale_factor /
-                                               int(p_data['_atom_site_symmetry_multiplicity'][subst['indices_to_substitute'][j]]))
+                                               int(p_data['_atom_site_symmetry_multiplicity'][subst.indices_to_substitute[j]]))
                     p_data["_atom_site_occupancy"].append(f"{new_atom_site_occupancy:.7f}")
-                    indices_to_substitute_occup[subst["indices_to_substitute"][j]] -= new_atom_site_occupancy
+                    indices_to_substitute_occup[subst.indices_to_substitute[j]] -= new_atom_site_occupancy
                     k += 1
 
             for idx, occup in indices_to_substitute_occup.items():
@@ -176,7 +177,7 @@ class CSS:
         :return: Filename.
         """
 
-        return os.path.splitext(os.path.split(self.config["structure_filename"])[1])[0] + "_interstitial" + ".cif"
+        return os.path.splitext(os.path.split(self.config.structure_filename)[1])[0] + "_interstitial" + ".cif"
 
     def _save_structure(self, parser_data: CifBlock, *args: str) -> None:
         """
@@ -239,13 +240,13 @@ class CSS:
                    unit=" composition",
                    ncols=200)
               as pbar,
-              ProcessPoolExecutor(max_workers=self.config["num_workers"],
+              ProcessPoolExecutor(max_workers=self.config.num_workers,
                                   initializer=self._init_supercell_worker,
                                   initargs=(self._result_path,))
               as pool):
             for supercell_structure_filename in os.listdir(self._supercell_input_cifs_path):
                 cmd = f"supercell -i {os.path.join(self._supercell_input_cifs_path, supercell_structure_filename)} -m "\
-                      f"-s {self.config['supercell']} "\
+                      f"-s {self.config.supercell} "\
                       f"-a {os.path.join(self._supercell_output_path, supercell_structure_filename.replace('.cif', ''))}.zip "\
                       f"-o {supercell_structure_filename.replace('.cif', '')}"
                 compound = supercell_structure_filename.replace('.cif', '')
@@ -288,10 +289,10 @@ class CSS:
                   desc="Checking out possibility of creation ordered representations of disordered structures",
                   unit=" composition",
                   ncols=200) as pbar:
-            pool = ProcessPoolExecutor(max_workers=self.config["num_workers"])
+            pool = ProcessPoolExecutor(max_workers=self.config.num_workers)
             for supercell_structure_filename in os.listdir(self._supercell_input_cifs_path):
                 cmd = f"supercell -i {os.path.join(self._supercell_input_cifs_path, supercell_structure_filename)} "\
-                      f"-s {self.config['supercell']} -d -v 0"
+                      f"-s {self.config.supercell} -d -v 0"
                 future = pool.submit(self._dry_supercell_worker, cmd)
                 future.add_done_callback(lambda p: pbar.update())
                 futures.append(future)
@@ -362,7 +363,7 @@ class CSS:
         """
 
         self.logger.info("Preparing to collect ordered representations' metadata ...")
-        substitute_with_species = tuple({subst['substitute_with'] for subst in self.config["substitution"]})
+        substitute_with_species = tuple({subst.substitute_with for subst in self.config.substitution})
         fields = ["cif_data", "structure_filename", "composition", "space_group_no", "space_group_symbol", "weight"]
         for specie in substitute_with_species:
             fields.append(f"{specie}_concentration")
@@ -375,7 +376,7 @@ class CSS:
                    unit=" composition",
                    ncols=200)
               as pbar,
-              ProcessPoolExecutor(max_workers=self.config["num_workers"],
+              ProcessPoolExecutor(max_workers=self.config.num_workers,
                                   initializer=self._init_collect_worker,
                                   initargs=(fields, substitute_with_species, self._ordered_representations_metadata_path, self._result_path))
               as pool):
