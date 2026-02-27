@@ -1,8 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 
 
 class Substitutions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     specie_to_substitute: str
     substitute_with: str
     substitution_low_limit: float
@@ -13,6 +14,7 @@ class Substitutions(BaseModel):
 
 
 class Config(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     result_dir: str
     structure_filename: str
     supercell: str = "1x1x1"
