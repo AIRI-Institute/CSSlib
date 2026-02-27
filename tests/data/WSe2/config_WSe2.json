@@ -1,6 +1,6 @@
 {
   "result_dir": "WSe2",
-  "structure_filename": "data/Wse2/WSe2.cif",
+  "structure_filename": "data/WSe2/WSe2.cif",
   "supercell": "2x2x1",
   "num_workers":  4,
   "substitution": [
