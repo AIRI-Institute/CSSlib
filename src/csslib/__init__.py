@@ -1,24 +1,25 @@
-from math import prod
-from itertools import product
-import os
-import sys
+"""Main library file with CSS class."""
+import csslib.exceptions as css_exc
 import json
-from tqdm import tqdm
+import os
 import pandas as pd
-from copy import deepcopy
-import zipfile
 import re
+import subprocess
+import sys
+import warnings
+import zipfile
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
-import subprocess
-from pymatgen.core import Structure
-from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from pymatgen.io.cif import CifParser, CifBlock
-from pymatgen.analysis.defects.generators import VoronoiInterstitialGenerator
-import warnings
+from copy import deepcopy
 from csslib.config_logging import get_main_logger, get_supercell_worker_logger, get_collect_worker_logger
 from csslib.config import Config
-
+from itertools import product
+from math import prod
+from pymatgen.analysis.defects.generators import VoronoiInterstitialGenerator
+from pymatgen.core import Structure
+from pymatgen.io.cif import CifParser, CifBlock
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
@@ -29,18 +30,32 @@ class CSS:
     _SUPERCELL_OUTPUT_DIR = "ordered_representations"
     _ORDERED_REPRESENTATIONS_METADATA_DIR = "ordered_representations_metadata"
 
-    def __init__(self, config_filename: str) -> None:
-        json_data = None
+    def __init__(self, config_filename: str, rewrite_results: bool = False) -> None:
+        if not os.path.isfile(config_filename):
+            raise css_exc.ConfigurationNotFoundError(f'{config_filename} is not found.')
+        
+        json_data, val_err = None, None
         with open(config_filename, 'rb') as f:
             json_data = f.read()
-        self.config = Config.model_validate_json(json_data)
+        try:
+            self.config = Config.model_validate_json(json_data)
+        except css_exc.ValidationError as e:
+            val_err = catch_config_errors(e)
+        if val_err is not None:
+            raise css_exc.ConfigurationError(val_err)
+        
         self._result_path = os.path.join(self._RESULTS_DIR, self.config.result_dir)
         self._supercell_input_cifs_path = os.path.join(self._result_path, self._SUPERCELL_INPUT_CIFS_DIR)
         self._supercell_output_path = os.path.join(self._result_path, self._SUPERCELL_OUTPUT_DIR)
         self._ordered_representations_metadata_path = os.path.join(self._result_path,
                                                                    self._ORDERED_REPRESENTATIONS_METADATA_DIR)
         os.makedirs(self._RESULTS_DIR, exist_ok=True)
-        os.makedirs(self._result_path)
+        try:
+            os.makedirs(self._result_path)
+        except FileExistsError:
+            if not rewrite_results:
+                raise css_exc.ResultsFolderExistError
+
         self._parser_data = None
         self._structure_sym = None
         self._scale_factor = 0
@@ -51,8 +66,10 @@ class CSS:
         Read an initial structure from a cif-file.
         :return: None.
         """
-
-        structure = Structure.from_file(self.config.structure_filename) # TODO: raise smart exeption when file is not found. Exmpl., StructureNotFoundError: check structure_filename field in the configuration file
+        try:
+            structure = Structure.from_file(self.config.structure_filename) 
+        except 
+            raise css_exc.StructureNotFoundError(f'Structure file `{self.config.structure_filename}` is not found.')
         self.logger.info("Initial structure is read.")
         finder = SpacegroupAnalyzer(structure)
         self._structure_sym = finder.get_symmetrized_structure()
