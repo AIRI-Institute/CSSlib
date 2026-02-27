@@ -1,0 +1,15 @@
+{
+  "result_dir": "CsPbI3",
+  "structure_filename": "name",
+  "cell": "2x1x1",
+  "num_workers": "many",
+  "substitution": [
+    {
+      "specie_to_substitute": "Cs",
+      "substitute_with": "X",
+      "substitution_low_limit": 0.0,
+      "substitution_high_limit": 0.06,
+      "unknown_param": "none"
+    }
+  ]
+}
