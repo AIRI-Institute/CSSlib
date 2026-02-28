@@ -68,7 +68,7 @@ class CSS:
         """
         try:
             structure = Structure.from_file(self.config.structure_filename) 
-        except 
+        except FileNotFoundError:
             raise css_exc.StructureNotFoundError(f'Structure file `{self.config.structure_filename}` is not found.')
         self.logger.info("Initial structure is read.")
         finder = SpacegroupAnalyzer(structure)
