@@ -6,7 +6,7 @@ authors = [
 ]
 readme = "README.md"
 description = "CSSlib is an open-source code for building configuration search space (CSS) of disordered crystals."
-requires-python = ">=3.9, <3.14"
+requires-python = ">=3.10, <3.14"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -17,6 +17,7 @@ dependencies = [
     "numpy >=1.26.4, <= 2.4.2",
     "pandas >=2.3.2, < 3.0",
     "plotly >=6.3.1, <= 6.5.2",
+    "pydantic >=2.12.5",
     "pymatgen ==2025.6.14",
     "pymatgen-analysis-defects ==2025.1.18",
     "scipy >=1.15.3, <1.17.1",

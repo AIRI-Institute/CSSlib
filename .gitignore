@@ -9,3 +9,4 @@ TODO.txt
 /src/csslib/__pycache__/
 /tests/.ipynb_checkpoints/
 /dist/
+uv.lock
