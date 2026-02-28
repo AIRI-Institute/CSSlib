@@ -40,7 +40,7 @@ class CSS:
         try:
             self.config = Config.model_validate_json(json_data)
         except css_exc.ValidationError as e:
-            val_err = catch_config_errors(e)
+            val_err = css_exc.catch_config_errors(e)
         if val_err is not None:
             raise css_exc.ConfigurationError(val_err)
         
