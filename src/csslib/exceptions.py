@@ -45,7 +45,16 @@ class StructureNotFoundError(CSSlibException):
         super().__init__(self.message)
 
 
-def catch_config_errors(e: ValidationError):
+def catch_config_errors(e: ValidationError) -> str:
+    """
+        Function for processing of the pydantic scheme exceptions. For internal library use! 
+
+        Args:
+          e (ValidationError): pydantic validation error object
+
+        Returns:
+          str: the message with full description of the config fields mistakes. 
+    """
     message = '\nThe following configuration errors were detected:\n'
     for el in e.errors():
         loc = el['loc']
