@@ -25,7 +25,6 @@ warnings.filterwarnings("ignore")
 
 
 class CSS:
-    _RESULTS_DIR = "results"
     _SUPERCELL_INPUT_CIFS_DIR = "disordered_structures"
     _SUPERCELL_OUTPUT_DIR = "ordered_representations"
     _ORDERED_REPRESENTATIONS_METADATA_DIR = "ordered_representations_metadata"
@@ -44,12 +43,11 @@ class CSS:
         if val_err is not None:
             raise css_exc.ConfigurationError(val_err)
         
-        self._result_path = os.path.join(self._RESULTS_DIR, self.config.result_dir)
+        self._result_path = os.path.abspath(self.config.result_dir)
         self._supercell_input_cifs_path = os.path.join(self._result_path, self._SUPERCELL_INPUT_CIFS_DIR)
         self._supercell_output_path = os.path.join(self._result_path, self._SUPERCELL_OUTPUT_DIR)
         self._ordered_representations_metadata_path = os.path.join(self._result_path,
                                                                    self._ORDERED_REPRESENTATIONS_METADATA_DIR)
-        os.makedirs(self._RESULTS_DIR, exist_ok=True)
         try:
             os.makedirs(self._result_path)
         except FileExistsError:
