@@ -246,7 +246,10 @@ class CSS:
 
         self.logger.info("Preparing to check out possibility of creation ordered representations of disordered structures ...")
         if (error_message := self._dry_run_supercell()) is not None:
-            self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())
+            if 'Number of total combinations is too high to work with' in error_message:
+                self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())
+            elif 'supercell: not found' in error_message:
+                self.logger.error("%s. Install the supercell programm from https://orex.github.io/supercell/.", error_message.rstrip())
             sys.exit(1)
         self.logger.info("Checking out possibility of creation ordered representations of disordered structures is finished successfully!")
         self.logger.info("Preparing to generate ordered representations of disordered structures ...")
