@@ -1,3 +1,11 @@
+"""Module for project logging setup. Contains functions returning specific loggers: main logger, supercell_worker logger, collect_worker logger."""
+
+__all__ = [
+    'get_main_logger',
+    'get_supercell_worker_logger',
+    'get_collect_worker_logger'
+]
+
 import logging
 import logging.config
 import os
@@ -54,10 +62,14 @@ log_config = {
 
 def configure_logging(result_path: str, log_filename: str = "main") -> None:
     """
-    Configure logging for the main process and the supercell and collect workers.
-    :param result_path: Logs will be saved in result_path/logs.
-    :param log_filename: Log filename.
-    :return: None.
+        Configure logging for the main process and the supercell and collect workers.
+        
+        Args:
+            result_path (str): the folder in which logs folder will be created. 
+            log_filename (str): a log filename.
+        
+        Return:
+            None.
     """
     os.makedirs(os.path.join(result_path, "logs"), exist_ok=True)
     log_config["handlers"]["file_handler"]["filename"] = os.path.join(result_path, "logs", f"{log_filename}.log")
@@ -66,9 +78,13 @@ def configure_logging(result_path: str, log_filename: str = "main") -> None:
 
 def get_main_logger(result_path: str) -> logging.Logger:
     """
-    Get the main logger.
-    :param result_path: Logs will be saved in result_path/logs.
-    :return: Logger.
+        Configures the main logger and returns it.
+    
+        Args:
+            result_path (str): the folder in which logs folder will be created.
+    
+        Return: 
+            Logger.
     """
     configure_logging(result_path)
     return logging.getLogger("main")
@@ -76,9 +92,13 @@ def get_main_logger(result_path: str) -> logging.Logger:
 
 def get_supercell_worker_logger(result_path: str) -> logging.Logger:
     """
-    Get the supercell worker logger.
-    :param result_path: Logs will be saved in result_path/logs.
-    :return: Logger.
+        Configures the supercell worker logger and returns it.
+        
+        Args:
+            result_path (str): the folder in which logs folder will be created.
+    
+        Return: 
+            Logger.
     """
     configure_logging(result_path, f"supercell_{current_process().name}")
     return logging.getLogger("supercell_worker")
@@ -86,9 +106,13 @@ def get_supercell_worker_logger(result_path: str) -> logging.Logger:
 
 def get_collect_worker_logger(result_path: str) -> logging.Logger:
     """
-    Get the collect worker logger.
-    :param result_path: Logs will be saved in result_path/logs.
-    :return: Logger.
+        Configures the collect worker logger and returns it.
+        
+        Args:
+            result_path (str): the folder in which logs folder will be created.
+    
+        Return: 
+            Logger.
     """
     configure_logging(result_path, f"collect_{current_process().name}")
     return logging.getLogger("collect_worker")
