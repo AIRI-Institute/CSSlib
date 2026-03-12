@@ -1,11 +1,9 @@
 import sys
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
-
 
 
 class Substitutions(BaseModel):
-    '''
+    """
         Substitution field pydantic scheme class of the config.
         
         Mandatory fields:
@@ -18,7 +16,7 @@ class Substitutions(BaseModel):
           substitution_low_limit_natoms (int): the minimum number of atoms that must be replaced 
           substitution_high_limit_natoms (int): the maximum number of atoms that must be replaced
           indices_to_substitute (list[int]): the list of atom indices that must be replaced
-    '''
+    """
     model_config = ConfigDict(extra="forbid")
     specie_to_substitute: str
     substitute_with: str
@@ -27,10 +25,12 @@ class Substitutions(BaseModel):
     substitution_low_limit_natoms: int | None = None
     substitution_high_limit_natoms: int | None = None
     indices_to_substitute: list[int] | None = None
+    substitute_with_labels: list[str] | None = None
+    labels_to_substitute: list[str] | None = None
 
 
 class Config(BaseModel):
-    '''
+    """
         Config pydantic scheme class.
         
         Mandatory fields:
@@ -41,7 +41,7 @@ class Config(BaseModel):
           supercell (str): system replication numbers in the following format: "2x1x1", "2x2x1", ... (default value - "1x1x1")
           num_workers (int): the number of parallel processes (default value - 1)
           substitution (list[Substitutions]): list of required substitutions for the system
-    '''
+    """
     model_config = ConfigDict(extra="forbid")
     result_dir: str
     structure_filename: str
@@ -51,7 +51,7 @@ class Config(BaseModel):
 
 
 def get_available_config_fields(output=sys.stdout):
-    '''
+    """
         Prints all possible config field names.
         
         Args:
@@ -59,7 +59,7 @@ def get_available_config_fields(output=sys.stdout):
         
         Returns:
           None
-    '''
+    """
     message = 'List of available config fields:\n'
     message += '  - "result_dir" - full or relative path to the results directory (mandatory)\n'
     message += '  - "structure_filename" - full or relative path to the .cif initial structure file (mandatory)\n'
@@ -79,7 +79,7 @@ def get_available_config_fields(output=sys.stdout):
 
 
 def get_example_config(output=sys.stdout):
-    '''
+    """
         Prints example config.
         
         Args:
@@ -87,7 +87,7 @@ def get_example_config(output=sys.stdout):
         
         Returns:
           None
-    '''
+    """
     message = '''{
   "result_dir": "path-to-directory-with-results",
   "structure_filename": "path-to-cif-file",

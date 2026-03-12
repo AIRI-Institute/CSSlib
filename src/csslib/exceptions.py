@@ -2,9 +2,9 @@ from pydantic import ValidationError
 
 
 class CSSlibException(Exception):
-    '''
+    """
         Abstract class for CSSlib exceptions. 
-    '''
+    """
     pass    
 
 
