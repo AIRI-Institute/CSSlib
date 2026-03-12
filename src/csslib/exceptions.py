@@ -13,6 +13,12 @@ class ConfigurationError(CSSlibException):
         Raised when there is an issue with the configuration file.
     """
     def __init__(self, message="Configuration issue"):
+        """
+            Initialization method of the ConfigurationError class. Raises when errors in the configuration file occurs.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to "Configuration issue".
+        """
         self.message = message
         super().__init__(self.message)
 
@@ -22,6 +28,12 @@ class ConfigurationNotFoundError(CSSlibException):
         Raised when configuration file is not found.
     """
     def __init__(self, message="Configuration file is not found."):
+        """
+            Initialization method of the ConfigurationNotFoundError class. Raises when the configuration file if not found.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to "Configuration file is not found.".
+        """
         self.message = message
         super().__init__(self.message)
 
@@ -31,6 +43,12 @@ class ResultsFolderExistError(CSSlibException):
         Raised when results folder is exists.
     """
     def __init__(self, message=None):
+        """
+            Initialization method of the ResultsFolderExistError class. Raises when the results folder exists and rewrite_results flag in CSS class initialisation method is False.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to None.
+        """
         self.message = message if message is not None else \
                 "Results folder is exists. Set `rewrite_results` flag as True to rewrite results."
         super().__init__(self.message)
@@ -41,6 +59,12 @@ class StructureNotFoundError(CSSlibException):
         Raised when structure .cif file is not found.
     """
     def __init__(self, message="Structure is not found."):
+        """
+            Initialization method of the StructureNotFoundError class. Raises when the structure cif file is not found.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to "Structure is not found.".
+        """
         self.message = message
         super().__init__(self.message)
 
