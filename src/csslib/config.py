@@ -33,6 +33,9 @@ class Substitution(BaseModel):
         message += f'      substitution_low_limit={self.substitution_low_limit},\n'
         message += f'      substitution_high_limit={self.substitution_high_limit},\n    )'
         return message
+      
+    def __str__(self):
+        return self.__repr__()
 
 
 class Config(BaseModel):
@@ -69,6 +72,9 @@ class Config(BaseModel):
                     message += '\n  '
         message += f']\n)\n'
         return message
+      
+    def __str__(self):
+        return self.__repr__()
 
 
 def get_available_config_fields(output=sys.stdout):

@@ -407,4 +407,4 @@ class CSS:
                          self._ordered_representations_metadata_path)
 
     def __repr__(self):
-        ... # TODO: implement repr method for more informative output about class object
+        return f"csslib.CSS object containing the following config file:\n{self.config.__repr__()}"
