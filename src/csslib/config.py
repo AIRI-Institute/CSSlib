@@ -4,7 +4,7 @@ from typing import Optional
 
 
 
-class Substitutions(BaseModel):
+class Substitution(BaseModel):
     '''
         Substitution field pydantic scheme class of the config.
         
@@ -27,6 +27,14 @@ class Substitutions(BaseModel):
     substitution_low_limit_natoms: int | None = None
     substitution_high_limit_natoms: int | None = None
     indices_to_substitute: list[int] | None = None
+    
+    def __repr__(self):
+        message = '\n    Substitution(\n'
+        message += f'      specie_to_substitute="{self.specie_to_substitute}",\n'
+        message += f'      substitute_with="{self.substitute_with}",\n'
+        message += f'      substitution_low_limit={self.substitution_low_limit},\n'
+        message += f'      substitution_high_limit={self.substitution_high_limit},\n    )'
+        return message
 
 
 class Config(BaseModel):
@@ -47,7 +55,24 @@ class Config(BaseModel):
     structure_filename: str
     supercell: str = "1x1x1"
     num_workers: int = 1
-    substitution: list[Substitutions] | None = None
+    substitution: list[Substitution] | None = None
+    
+    def __repr__(self):
+        message = 'Config(\n'
+        message += f'  result_dir="{self.result_dir}",\n'
+        message += f'  structure_filename="{self.structure_filename}",\n'
+        message += f'  supercell="{self.supercell}",\n'
+        message += f'  num_workers={self.num_workers},\n'
+        message += f'  substitution=['
+        if self.substitution is not None:
+            for indx, subst in enumerate(self.substitution):
+                message += subst.__repr__()
+                if len(self.substitution) > 1 and indx != len(self.substitution) - 1:
+                    message += ','
+                if indx == len(self.substitution) - 1:
+                    message += '\n  '
+        message += f']\n)\n'
+        return message
 
 
 def get_available_config_fields(output=sys.stdout):
