@@ -1,3 +1,11 @@
+"""Module with pydantic model classes for configs validation (Config, Substitution) and overview functions with information about available 
+config fields and the example config."""
+
+__all__ = [
+    'get_available_config_fields',
+    'get_example_config'
+]
+
 import sys
 from pydantic import BaseModel, ConfigDict
 
