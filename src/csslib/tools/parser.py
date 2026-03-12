@@ -1,0 +1,1 @@
+"""Module with functions for parsing VASP output xml files"""
