@@ -12,7 +12,7 @@ import os
 from multiprocessing import current_process
 
 
-log_config = {
+_log_config = {
     "version": 1,
     "disable_existing_loggers": True,
     "formatters": {
@@ -75,7 +75,7 @@ log_config = {
 }
 
 
-def configure_logging(result_path: str, log_filename: str = "main") -> None:
+def _configure_logging(result_path: str, log_filename: str = "main") -> None:
     """
         Configure logging for the main process and the supercell and collect workers.
         
@@ -84,13 +84,13 @@ def configure_logging(result_path: str, log_filename: str = "main") -> None:
             log_filename (str): a log filename.
     """
     os.makedirs(os.path.join(result_path, "logs"), exist_ok=True)
-    log_config["handlers"]["file_handler"]["filename"] = os.path.join(result_path, "logs", f"{log_filename}.log")
-    logging.config.dictConfig(log_config)
+    _log_config["handlers"]["file_handler"]["filename"] = os.path.join(result_path, "logs", f"{log_filename}.log")
+    logging.config.dictConfig(_log_config)
 
 
 def get_css_logger(result_path: str) -> logging.Logger:
     """
-        Configures the main logger and returns it.
+        Configures the css logger and returns it.
     
         Args:
             result_path (str): the folder in which logs folder will be created.
@@ -98,8 +98,50 @@ def get_css_logger(result_path: str) -> logging.Logger:
         Return: 
             Logger.
     """
-    configure_logging(result_path)
+    _configure_logging(result_path)
     return logging.getLogger("css")
+
+
+def get_tools_logger(result_path: str) -> logging.Logger:
+    """
+        Configures the tools logger and returns it.
+    
+        Args:
+            result_path (str): the folder in which logs folder will be created.
+    
+        Return: 
+            Logger.
+    """
+    _configure_logging(result_path)
+    return logging.getLogger("tools")
+
+
+def get_config_logger(result_path: str) -> logging.Logger:
+    """
+        Configures the config logger and returns it.
+    
+        Args:
+            result_path (str): the folder in which logs folder will be created.
+    
+        Return: 
+            Logger.
+    """
+    _configure_logging(result_path)
+    return logging.getLogger("config")
+
+
+def get_exceptions_logger(result_path: str) -> logging.Logger:
+    """
+        Configures the exceptions logger and returns it.
+    
+        Args:
+            result_path (str): the folder in which logs folder will be created.
+    
+        Return: 
+            Logger.
+    """
+    _configure_logging(result_path)
+    return logging.getLogger("exceptions")
 
 
 def get_supercell_worker_logger(result_path: str) -> logging.Logger:
@@ -112,7 +154,7 @@ def get_supercell_worker_logger(result_path: str) -> logging.Logger:
         Return: 
             Logger.
     """
-    configure_logging(result_path, f"supercell_{current_process().name}")
+    _configure_logging(result_path, f"supercell_{current_process().name}")
     return logging.getLogger("supercell_worker")
 
 
@@ -126,5 +168,5 @@ def get_collect_worker_logger(result_path: str) -> logging.Logger:
         Return: 
             Logger.
     """
-    configure_logging(result_path, f"collect_{current_process().name}")
+    _configure_logging(result_path, f"collect_{current_process().name}")
     return logging.getLogger("collect_worker")
