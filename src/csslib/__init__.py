@@ -1,4 +1,4 @@
-"""Main csslib file"""
+"""Main csslib file."""
 
 __all__ = [
     "config",

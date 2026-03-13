@@ -41,9 +41,24 @@ log_config = {
         }
     },
     "loggers": {
-        "main": {
+        "css": {
             "handlers": ["console_handler", "file_handler"],
             "level": "DEBUG",
+            "propagate": False
+        },
+        "tools": {
+            "handlers": ["console_handler", "file_handler"],
+            "level": "DEBUG",
+            "propagate": False
+        },
+        "config": {
+            "handlers": ["console_handler"],
+            "level": "DEBUG",
+            "propagate": False
+        },
+        "exceptions": {
+            "handlers": ["file_handler"],
+            "level": "WARNING",
             "propagate": False
         },
         "supercell_worker": {
@@ -55,9 +70,9 @@ log_config = {
             "handlers": ["file_handler"],
             "level": "DEBUG",
             "propagate": False
-        }
-        }
+        },
     }
+}
 
 
 def configure_logging(result_path: str, log_filename: str = "main") -> None:
@@ -76,7 +91,7 @@ def configure_logging(result_path: str, log_filename: str = "main") -> None:
     logging.config.dictConfig(log_config)
 
 
-def get_main_logger(result_path: str) -> logging.Logger:
+def get_css_logger(result_path: str) -> logging.Logger:
     """
         Configures the main logger and returns it.
     
@@ -87,7 +102,7 @@ def get_main_logger(result_path: str) -> logging.Logger:
             Logger.
     """
     configure_logging(result_path)
-    return logging.getLogger("main")
+    return logging.getLogger("css")
 
 
 def get_supercell_worker_logger(result_path: str) -> logging.Logger:

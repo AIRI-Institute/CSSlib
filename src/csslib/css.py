@@ -15,7 +15,7 @@ import zipfile
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from copy import deepcopy
-from csslib.config_logging import get_main_logger, get_supercell_worker_logger, get_collect_worker_logger
+from csslib.config_logging import get_css_logger, get_supercell_worker_logger, get_collect_worker_logger
 from csslib.config import Config
 from itertools import product
 from math import prod
@@ -84,7 +84,7 @@ class CSS:
         self._parser_data = None
         self._structure_sym = None
         self._scale_factor = 0
-        self.logger = get_main_logger(self._result_path)
+        self.logger = get_css_logger(self._result_path)
 
     def read_structure(self) -> None:
         """
