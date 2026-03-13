@@ -82,9 +82,6 @@ def configure_logging(result_path: str, log_filename: str = "main") -> None:
         Args:
             result_path (str): the folder in which logs folder will be created. 
             log_filename (str): a log filename.
-        
-        Return:
-            None.
     """
     os.makedirs(os.path.join(result_path, "logs"), exist_ok=True)
     log_config["handlers"]["file_handler"]["filename"] = os.path.join(result_path, "logs", f"{log_filename}.log")

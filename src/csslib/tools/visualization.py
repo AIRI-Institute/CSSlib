@@ -1,6 +1,5 @@
 import matplotlib.pyplot as plt
 import pandas as pd
-import json
 import re
 import numpy as np
 from pymatgen.symmetry.groups import SpaceGroup, SYMM_DATA

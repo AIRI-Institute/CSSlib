@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class Substitution(BaseModel):
-    '''
+    """
         Substitution field pydantic scheme class of the config.
         
         Fields:
@@ -24,7 +24,9 @@ class Substitution(BaseModel):
           substitution_low_limit_natoms (int): the minimum number of atoms that must be replaced.
           substitution_high_limit_natoms (int): the maximum number of atoms that must be replaced.
           indices_to_substitute (list[int]): the list of atom indices that must be replaced.
-    '''
+          substitute_with_labels (list[str]):  __description__.
+          labels_to_substitute (list[str]):  __description__.
+    """
     model_config = ConfigDict(extra="forbid")
     specie_to_substitute: str
     substitute_with: str
@@ -33,6 +35,8 @@ class Substitution(BaseModel):
     substitution_low_limit_natoms: int | None = None
     substitution_high_limit_natoms: int | None = None
     indices_to_substitute: list[int] | None = None
+    substitute_with_labels: list[str] | None = None
+    labels_to_substitute: list[str] | None = None
     
     def __repr__(self):
         message = '\n    Substitution(\n'
@@ -47,7 +51,7 @@ class Substitution(BaseModel):
 
 
 class Config(BaseModel):
-    '''
+    """
         Config pydantic scheme class.
         
         Fields:
@@ -56,7 +60,7 @@ class Config(BaseModel):
           supercell (str, optional): system replication numbers in the following format: "2x1x1", "2x2x1", ... Defaults to "1x1x1".
           num_workers (int, optional): the number of parallel processes. Defaults to 1.
           substitution (list[Substitutions], optional): list of required substitutions for the system.
-    '''
+    """
     model_config = ConfigDict(extra="forbid")
     result_dir: str
     structure_filename: str
@@ -86,12 +90,12 @@ class Config(BaseModel):
 
 
 def get_available_config_fields(output=sys.stdout):
-    '''
+    """
         Prints all possible config field names.
         
         Args:
           output (TextIO | Any): an output stream.
-    '''
+    """
     message = 'List of available config fields:\n'
     message += '  - "result_dir" - full or relative path to the results directory (mandatory)\n'
     message += '  - "structure_filename" - full or relative path to the .cif initial structure file (mandatory)\n'
@@ -111,12 +115,12 @@ def get_available_config_fields(output=sys.stdout):
 
 
 def get_example_config(output=sys.stdout):
-    '''
+    """
         Prints example config.
         
         Args:
           output (TextIO | Any): an output stream.
-    '''
+    """
     message = '''{
   "result_dir": "path-to-directory-with-results",
   "structure_filename": "path-to-cif-file",
