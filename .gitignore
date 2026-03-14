@@ -1,12 +1,33 @@
+# Venv files
 /venv/
-/.ipynb_checkpoints/
-/.idea/
+/.venv/
+
+# Python and jupyter cache files
 /__pycache__/
-/supercell.exe
-/results/
-/src/csslib.egg-info/
 /src/csslib/__pycache__/
+/src/csslib/tools/__pycache__/
+/tests/__pycache__/
+/.ipynb_checkpoints/
 /tests/.ipynb_checkpoints/
-/dist/
-uv.lock
+
+# IDE files
 /.vscode/
+/.idea/
+
+# Supercell binary
+/supercell.exe
+/supercell
+
+# Library pypi build files
+/dist/
+/src/csslib.egg-info/
+
+# UV files
+uv.lock
+
+# Library tests output files
+/results/
+/src/results/
+/tests/results/
+/tests/data/results/
+/src/csslib/csslib.log

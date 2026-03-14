@@ -3,13 +3,25 @@
 __all__ = []
 
 from pydantic import ValidationError
+from csslib.logging_ import get_exceptions_logger
+
+logger = get_exceptions_logger()
 
 
 class CSSlibException(Exception):
     """
         Abstract class for CSSlib exceptions. 
     """
-    pass    
+    def __init__(self, message):
+        """
+            Initialization method of the CSSlibException abstract class. Stores the information about an exception in the .log file.
+
+            Args:
+                message (str): Text description of the error.
+        """
+        self.message = message
+        super().__init__(self.message)
+        logger.critical('', exc_info=self, stack_info=True)
 
 
 class ConfigurationError(CSSlibException):
@@ -23,8 +35,7 @@ class ConfigurationError(CSSlibException):
             Args:
                 message (str, optional): Text description of the error. Defaults to "Configuration issue".
         """
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(message)
 
 
 class ConfigurationNotFoundError(CSSlibException):
@@ -38,8 +49,7 @@ class ConfigurationNotFoundError(CSSlibException):
             Args:
                 message (str, optional): Text description of the error. Defaults to "Configuration file is not found.".
         """
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(message)
 
 
 class ResultsFolderExistError(CSSlibException):
@@ -53,9 +63,8 @@ class ResultsFolderExistError(CSSlibException):
             Args:
                 message (str, optional): Text description of the error. Defaults to None.
         """
-        self.message = message if message is not None else \
-                'Results folder is exists. Set `rewrite_results` flag as True to rewrite results.'
-        super().__init__(self.message)
+        super().__init__(message if message is not None else \
+                'Results folder is exists. Set `rewrite_results` flag as True to rewrite results.')
 
 
 class StructureNotFoundError(CSSlibException):
@@ -69,8 +78,7 @@ class StructureNotFoundError(CSSlibException):
             Args:
                 message (str, optional): Text description of the error. Defaults to "Structure is not found.".
         """
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(message)
 
 
 def catch_config_errors(e: ValidationError) -> str:
@@ -78,10 +86,10 @@ def catch_config_errors(e: ValidationError) -> str:
         Function for processing of the pydantic scheme exceptions. For internal library use! 
 
         Args:
-          e (ValidationError): pydantic validation error object
+            e (ValidationError): pydantic validation error object
 
         Returns:
-          str: the message with full description of the config fields mistakes. 
+            str: the message with full description of the config fields mistakes. 
     """
     message = '\nThe following configuration errors were detected:\n'
     for el in e.errors():

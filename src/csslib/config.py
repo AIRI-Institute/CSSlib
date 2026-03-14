@@ -6,26 +6,27 @@ __all__ = [
     'get_example_config'
 ]
 
-import sys
+from csslib.logging_ import get_config_logger
 from pydantic import BaseModel, ConfigDict
 
+logger = get_config_logger()
 
 class Substitution(BaseModel):
     """
         Substitution field pydantic scheme class of the config.
         
         Fields:
-          specie_to_substitute (str): the chemical element that must be replaced.
-          substitute_with (str): the chemical element that will replace the original chemical element.
-          substitution_low_limit (float): lower boundary of the substitution. Restrictions: >= 0 and < 1. Example: 0.05.
-          substitution_high_limit (float): higher boundary of the substitution. Restrictions: > 0, <= 1 and > substitution_low_limit. Example: 0.5.
+            specie_to_substitute (str): the chemical element that must be replaced.
+            substitute_with (str): the chemical element that will replace the original chemical element.
+            substitution_low_limit (float): lower boundary of the substitution. Restrictions: >= 0 and < 1. Example: 0.05.
+            substitution_high_limit (float): higher boundary of the substitution. Restrictions: > 0, <= 1 and > substitution_low_limit. Example: 0.5.
         
         Fields that must be empty:
-          substitution_low_limit_natoms (int): the minimum number of atoms that must be replaced.
-          substitution_high_limit_natoms (int): the maximum number of atoms that must be replaced.
-          indices_to_substitute (list[int]): the list of atom indices that must be replaced.
-          substitute_with_labels (list[str]):  __description__.
-          labels_to_substitute (list[str]):  __description__.
+            substitution_low_limit_natoms (int): the minimum number of atoms that must be replaced.
+            substitution_high_limit_natoms (int): the maximum number of atoms that must be replaced.
+            indices_to_substitute (list[int]): the list of atom indices that must be replaced.
+            substitute_with_labels (list[str]):  __description__.
+            labels_to_substitute (list[str]):  __description__.
     """
     model_config = ConfigDict(extra="forbid")
     specie_to_substitute: str
@@ -37,7 +38,7 @@ class Substitution(BaseModel):
     indices_to_substitute: list[int] | None = None
     substitute_with_labels: list[str] | None = None
     labels_to_substitute: list[str] | None = None
-    
+
     def __repr__(self):
         message = '\n    Substitution(\n'
         message += f'      specie_to_substitute="{self.specie_to_substitute}",\n'
@@ -55,11 +56,11 @@ class Config(BaseModel):
         Config pydantic scheme class.
         
         Fields:
-          result_dir (str): a full or relative path to the results directory.
-          structure_filename (str): a full or relative path to the .cif initial structure file.
-          supercell (str, optional): system replication numbers in the following format: "2x1x1", "2x2x1", ... Defaults to "1x1x1".
-          num_workers (int, optional): the number of parallel processes. Defaults to 1.
-          substitution (list[Substitutions], optional): list of required substitutions for the system.
+            result_dir (str): a full or relative path to the results directory.
+            structure_filename (str): a full or relative path to the .cif initial structure file.
+            supercell (str, optional): system replication numbers in the following format: "2x1x1", "2x2x1", ... Defaults to "1x1x1".
+            num_workers (int, optional): the number of parallel processes. Defaults to 1.
+            substitution (list[Substitutions], optional): list of required substitutions for the system.
     """
     model_config = ConfigDict(extra="forbid")
     result_dir: str
@@ -67,6 +68,12 @@ class Config(BaseModel):
     supercell: str = "1x1x1"
     num_workers: int = 1
     substitution: list[Substitution] | None = None
+    
+    @classmethod
+    def model_validate_json(cls, json_data: str | bytes | bytearray,):
+        model = super().model_validate_json(json_data)
+        logger.info(f"The following config is read:\n{model}")
+        return model
     
     def __repr__(self):
         message = 'Config(\n'
@@ -89,14 +96,11 @@ class Config(BaseModel):
         return self.__repr__()
 
 
-def get_available_config_fields(output=sys.stdout):
+def get_available_config_fields():
     """
         Prints all possible config field names.
-        
-        Args:
-          output (TextIO | Any): an output stream.
     """
-    message = 'List of available config fields:\n'
+    message = '\nList of available config fields:\n'
     message += '  - "result_dir" - full or relative path to the results directory (mandatory)\n'
     message += '  - "structure_filename" - full or relative path to the .cif initial structure file (mandatory)\n'
     message += '  - "supercell" - system replication numbers in the following format: "2x1x1", "2x2x1", ... (optional, default value - "1x1x1")\n'
@@ -111,17 +115,15 @@ def get_available_config_fields(output=sys.stdout):
     message += '    - "substitution_high_limit_natoms"\n'
     message += '    - "indices_to_substitute"\n'
     message += 'Example config can be obtained by the `get_example_config` function of `csslib.config`.\n'
-    print(message, file=output)
+    logger.info(message)
 
 
-def get_example_config(output=sys.stdout):
+def get_example_config():
     """
         Prints example config.
-        
-        Args:
-          output (TextIO | Any): an output stream.
     """
-    message = '''{
+    message = '''
+{
   "result_dir": "path-to-directory-with-results",
   "structure_filename": "path-to-cif-file",
   "supercell": "1x1x1",
@@ -141,4 +143,4 @@ def get_example_config(output=sys.stdout):
     }
   ]
 }'''
-    print(message, file=output)
+    logger.info(message)

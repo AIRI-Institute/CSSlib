@@ -1,7 +1,18 @@
-"""Module for project logging setup. Contains functions returning specific loggers: main logger, supercell_worker logger, collect_worker logger."""
+"""
+    Module for project logging setup. Contains functions returning specific loggers: 
+    - css
+    - tools
+    - config
+    - exceptions
+    - supercell_worker 
+    - collect_worker
+"""
 
 __all__ = [
-    'get_main_logger',
+    'get_css_logger',
+    'get_tools_logger',
+    'get_config_logger',
+    'get_exceptions_logger',
     'get_supercell_worker_logger',
     'get_collect_worker_logger'
 ]
@@ -35,7 +46,7 @@ _log_config = {
             "level": "DEBUG",
             "formatter": "file_formatter",
             "class": "logging.FileHandler",
-            "filename": "",
+            "filename": os.path.join(os.path.abspath(__file__).rstrip('logging_.py'), 'csslib.log'),
             "mode": "a",
             "encoding": "utf-8"
         }
@@ -52,7 +63,7 @@ _log_config = {
             "propagate": False
         },
         "config": {
-            "handlers": ["console_handler"],
+            "handlers": ["console_handler", "file_handler"],
             "level": "DEBUG",
             "propagate": False
         },
@@ -77,7 +88,7 @@ _log_config = {
 
 def _configure_logging(result_path: str, log_filename: str = "main") -> None:
     """
-        Configure logging for the main process and the supercell and collect workers.
+        Configure logging for the csslib modules.
         
         Args:
             result_path (str): the folder in which logs folder will be created. 
@@ -102,7 +113,7 @@ def get_css_logger(result_path: str) -> logging.Logger:
     return logging.getLogger("css")
 
 
-def get_tools_logger(result_path: str) -> logging.Logger:
+def get_tools_logger() -> logging.Logger:
     """
         Configures the tools logger and returns it.
     
@@ -112,11 +123,11 @@ def get_tools_logger(result_path: str) -> logging.Logger:
         Return: 
             Logger.
     """
-    _configure_logging(result_path)
+    logging.config.dictConfig(_log_config)
     return logging.getLogger("tools")
 
 
-def get_config_logger(result_path: str) -> logging.Logger:
+def get_config_logger() -> logging.Logger:
     """
         Configures the config logger and returns it.
     
@@ -126,11 +137,11 @@ def get_config_logger(result_path: str) -> logging.Logger:
         Return: 
             Logger.
     """
-    _configure_logging(result_path)
+    logging.config.dictConfig(_log_config)
     return logging.getLogger("config")
 
 
-def get_exceptions_logger(result_path: str) -> logging.Logger:
+def get_exceptions_logger() -> logging.Logger:
     """
         Configures the exceptions logger and returns it.
     
@@ -140,7 +151,7 @@ def get_exceptions_logger(result_path: str) -> logging.Logger:
         Return: 
             Logger.
     """
-    _configure_logging(result_path)
+    logging.config.dictConfig(_log_config)
     return logging.getLogger("exceptions")
 
 
