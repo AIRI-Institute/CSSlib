@@ -15,7 +15,7 @@ import zipfile
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from copy import deepcopy
-from csslib.config_logging import get_css_logger, get_supercell_worker_logger, get_collect_worker_logger
+from csslib.logging_ import get_css_logger, get_supercell_worker_logger, get_collect_worker_logger
 from csslib.config import Config
 from itertools import product
 from math import prod
@@ -97,9 +97,6 @@ class CSS:
             4. Check the possibility of css structures creation.
             5. Runs supercell program in serial/parallel mode.
             6. Collects information about all css structures and saves it to pandas dataframes.
-            
-            Return:
-                None
         """
         self._read_structure()
         self._evaluate_substitution_parameters()
@@ -122,28 +119,6 @@ class CSS:
         parser = CifParser(self.config.structure_filename)
         self._parser_data = next(iter(parser._cif.data.values()))
         self.logger.info("Initial structure is read at %s.", self.config.structure_filename)
-
-    # def generate_interstitial_structure(self) -> None:  # TODO: implement smart-exceptions
-    #     """
-    #     Generate interstitial structure using Voronoi algorithm and save it to a cif-file.
-    #     Interstitial sites are filled by Neptunium species.
-    #     :return: None.
-    #     """
-    #
-    #     self.logger.info("Preparing to generate interstitial structure.")
-    #     interstitial_generator = VoronoiInterstitialGenerator()
-    #     for i, interstitial in enumerate(interstitial_generator.generate(self._structure_sym, {"Np", })):
-    #         self._parser_data["_atom_site_type_symbol"].append("Np")
-    #         self._parser_data["_atom_site_label"].append(f"Np{i}")
-    #         self._parser_data["_atom_site_symmetry_multiplicity"].append(str(interstitial.multiplicity))
-    #         self._parser_data["_atom_site_fract_x"].append(f"{interstitial.site.frac_coords[0]:.7f}")
-    #         self._parser_data["_atom_site_fract_y"].append(f"{interstitial.site.frac_coords[1]:.7f}")
-    #         self._parser_data["_atom_site_fract_z"].append(f"{interstitial.site.frac_coords[2]:.7f}")
-    #         self._parser_data["_atom_site_occupancy"].append("1.0")
-    #
-    #     interstitial_structure_filename = self._create_interstitial_structure_filename()
-    #     self._save_structure(self._parser_data, interstitial_structure_filename)
-    #     self.logger.info("Interstitial structure is generated and saved at %s.", self._result_path)
 
     def _evaluate_substitution_parameters(self) -> None:
         """
@@ -215,7 +190,7 @@ class CSS:
     
     def _create_and_save_substitution_template(self) -> None:
         """
-        Create and save template for subsequent substitution runs, i.e. for css structures generation.
+            Creates and saves the template for subsequent substitution runs, i.e. for the css structures generation.
         """
         for subst in self.config.substitution:
             for j in range(len(subst.indices_to_substitute)):
@@ -238,31 +213,23 @@ class CSS:
     @staticmethod
     def _create_css_structures_filename(substitution_labels_natoms: dict) -> str:
         """
-        Create a filename for archive with css structures.
+            Creates a filename for archive with css structures.
 
-        Args:
-            substitution_labels_natoms (dict): Amount of substituted species in the supercell structure.
+            Args:
+                substitution_labels_natoms (dict): amount of substituted species in the supercell structure.
 
-        Returns:
-            str: Filename.
+            Returns:
+                str: Filename.
         """
         return "-".join([f"{k}_{v}" for k, v in substitution_labels_natoms.items()]) + ".zip"
 
-    # def _create_interstitial_structure_filename(self) -> str:
-    #     """
-    #     Create a filename for interstitial structure.
-    #     :return: Filename.
-    #     """
-    #
-    #     return os.path.splitext(os.path.split(self.config.structure_filename)[1])[0] + "_interstitial" + ".cif"
-
     def _save_structure(self, parser_data: CifBlock, *args: str) -> None:
         """
-        Save a structure to a cif-file.
+            Saves a structure to a cif-file.
 
-        Args:
-            parser_data (CifBlock): Structural data to save.
-            args (str): Path to the directory to save the structure.
+            Args:
+                parser_data (CifBlock): a structural data to save.
+                args (str): path to the directory to save the structure.
         """
         with open(os.path.join(self._result_path, *args), "w") as f:
             f.write(str(parser_data))
@@ -270,10 +237,10 @@ class CSS:
     @staticmethod
     def _init_supercell_worker(result_path: str) -> None:
         """
-        Initialize supercell workers.
+            Initializes supercell workers.
 
-        Args:
-            result_path (str): Path to the results' directory.
+            Args:
+                result_path (str): path to the results' directory.
         """
         logger_ = get_supercell_worker_logger(result_path)
         global supercell_worker_logger
@@ -282,13 +249,13 @@ class CSS:
     @staticmethod
     def _supercell_worker(cmd: str, css_structures_filename: str) -> int:
         """
-        Run a Supercell worker (a process with Supercell software instance).
+            Runs a Supercell worker (a process with Supercell software instance).
 
-        Args:
-            cmd (str): Command to run.
+            Args:
+                cmd (str): a command to run.
 
-        Returns:
-            int: Return code.
+            Returns:
+                int: return code.
         """
         worker_output = subprocess.run(cmd, shell=True, text=True, encoding="utf-8", capture_output=True)
         if worker_output.returncode == 0:
@@ -302,7 +269,7 @@ class CSS:
 
     def _run_supercell(self) -> None:
         """
-        Run Supercell software to create css structures.
+            Runs Supercell software to create css structures.
         """
         self.logger.info("Preparing to generate CSS structures ...")
         os.makedirs(self._css_structures_path)
@@ -342,14 +309,14 @@ class CSS:
     @staticmethod
     def _dry_supercell_worker(cmd: str) -> str | None:
         """
-        Run a Supercell worker (a process with Supercell software instance) in dry-run mode
-        to check the possibility of css structures creation.
+            Runs a Supercell worker (a process with Supercell software instance) in dry-run mode
+            to check the possibility of the css structures creation.
 
-        Args:
-            cmd (str): Command to run.
+            Args:
+                cmd (str): a command to run.
 
-        Returns:
-            str or None: Error message if something went wrong, None otherwise.
+            Returns:
+                str or None: error message if something went wrong, None otherwise.
         """
         worker_output = subprocess.run(cmd, shell=True, text=True, encoding="utf-8", capture_output=True)
         if worker_output.returncode == 0:
@@ -358,7 +325,7 @@ class CSS:
 
     def _dry_run_supercell(self) -> None:
         """
-        Check the possibility of css structures creation.
+            Checks the possibility of css structures creation.
         """
         self.logger.info("Preparing to check out possibility of CSS structures creation ...")
         futures = []
@@ -388,13 +355,13 @@ class CSS:
     def _init_collect_worker(fields: tuple, substitute_with_species: tuple,
                              css_structures_metadata_path: str, result_path: str) -> None:
         """
-        Initialize collect workers.
+            Initializes collect workers.
 
-        Args:
-            fields (tuple): Names of dataframe columns where metadata collected.
-            substitute_with_species (tuple): Species that were used as substitutes.
-            css_structures_metadata_path (str): Path to archives with css structures.
-            result_path (str): Path to the results' directory.
+            Args:
+                fields (tuple): names of dataframe columns where metadata collected.
+                substitute_with_species (tuple): species that were used as substitutes.
+                css_structures_metadata_path (str): path to archives with css structures.
+                result_path (str): path to the results' directory.
         """
         global fields_, substitute_with_species_, css_structures_metadata_path_, collect_worker_logger_
         fields_ = fields
@@ -406,10 +373,10 @@ class CSS:
     @staticmethod
     def _collect_data_one_composition(archive_path: str) -> None:
         """
-        Collect meta-information about one particular composition.
+            Collects meta-information about one particular composition.
 
-        Args:
-             archive_path (str): Path to archive containing css structures with single composition.
+            Args:
+                archive_path (str): path to archive containing css structures with single composition.
         """
         css_structures_metadata = {key: [] for key in fields_}
         with zipfile.ZipFile(archive_path, "r") as archive:
@@ -437,7 +404,7 @@ class CSS:
 
     def _collect_data(self) -> None:
         """
-        Collect meta-information about all css structures and save it to pandas dataframes.
+            Collects meta-information about all css structures and save it to pandas dataframes.
         """
         self.logger.info("Preparing to collect metadata of CSS structures ...")
         substitute_with_species = tuple({subst.substitute_with for subst in self.config.substitution})
@@ -464,4 +431,10 @@ class CSS:
         self.logger.info("Metadata of CSS structures is collected and saved at %s.", self._css_structures_metadata_path)
 
     def __repr__(self):
+        """
+            __repr__ method of the csslib.CSS class.
+
+            Return:
+                str: information about config, stored in the class variable CSS.config.
+        """
         return f"csslib.CSS object containing the following config file:\n{self.config.__repr__()}"
