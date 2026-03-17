@@ -84,8 +84,9 @@ class CSS:
         self._substitution_template_filename = f"substitution_template_{os.path.basename(self.config.structure_filename)}"
         self._structure = None
         self._parser_data = None
+        self._full_css_metadata = None
         self._scale_factor = 0
-        self._substitution_labels_natoms_list = []    
+        self._substitution_labels_natoms_list = []
         self.logger = get_css_logger(self._result_path)
 
     def generate_css(self):
@@ -272,7 +273,7 @@ class CSS:
             Runs Supercell software to create css structures.
         """
         self.logger.info("Preparing to generate CSS structures ...")
-        os.makedirs(self._css_structures_path)
+        os.makedirs(self._css_structures_path, exist_ok=True)
         futures = []
         with (tqdm(range(len(self._substitution_labels_natoms_list)),
                    desc="Creating CSS structures",
@@ -346,7 +347,12 @@ class CSS:
             for future in as_completed(futures):
                 if (error_message := future.result()) is not None:
                     pool.shutdown(wait=True, cancel_futures=True)
-                    self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())
+                    if 'Number of total combinations is too high to work with' in error_message:
+                        self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())
+                    elif 'supercell: command not found' in error_message or 'supercell: not found' in error_message:
+                        self.logger.error("%s. Install the supercell programm from https://orex.github.io/supercell/.", error_message.rstrip())
+                    else:
+                        self.logger.error("%s Unexpected error occured!", error_message.rstrip())
                     sys.exit(1)
             pool.shutdown(wait=True, cancel_futures=False)
             self.logger.info("Checking out possibility of CSS structures creation is finished successfully!")
@@ -371,12 +377,16 @@ class CSS:
         collect_worker_logger_ = logger
 
     @staticmethod
-    def _collect_data_one_composition(archive_path: str) -> None:
+    def _collect_data_one_composition(archive_path: str, full_css_metadata_list: list) -> pd.DataFrame:
         """
-            Collects meta-information about one particular composition.
+            Collects meta-information about one particular composition and stores information about space group distribution for configurations.
 
             Args:
                 archive_path (str): path to archive containing css structures with single composition.
+                
+            Return:
+                pandas.DataFrame: information about the number of non-equivalent and all structures for the specified space group and the 
+                concentration of substituting atoms.
         """
         css_structures_metadata = {key: [] for key in fields_}
         with zipfile.ZipFile(archive_path, "r") as archive:
@@ -395,16 +405,20 @@ class CSS:
                     for specie in substitute_with_species_:
                         css_structures_metadata[f"{specie}_concentration"].append(specie_counter[specie] / len(structure))
         css_structures_metadata_df = pd.DataFrame.from_dict(css_structures_metadata)
+        general_metadata_df = css_structures_metadata_df.groupby(['space_group_no', 'space_group_symbol', 
+                                                                  *[f"{specie}_concentration" for specie in substitute_with_species_]]).agg(cfgs_count=('structure_filename', 'count'),
+                                                                                                                                            all_cfgs_count=('weight', 'sum'))
         css_structures_metadata_path = os.path.join(css_structures_metadata_path_,
                                                     os.path.splitext(os.path.basename(archive_path))[0] + ".pkl.gz")
         css_structures_metadata_df.to_pickle(css_structures_metadata_path)
         collect_worker_logger_.info("%s - DONE! - The total number of CSS structures: %d",
                                     os.path.splitext(os.path.basename(archive_path))[0],
                                     css_structures_metadata_df.shape[0])
+        return general_metadata_df
 
     def _collect_data(self) -> None:
         """
-            Collects meta-information about all css structures and save it to pandas dataframes.
+            Collects meta-information about all css structures, space group distribution for configurations and saves it to pandas dataframes.
         """
         self.logger.info("Preparing to collect metadata of CSS structures ...")
         substitute_with_species = tuple({subst.substitute_with for subst in self.config.substitution})
@@ -412,9 +426,10 @@ class CSS:
         for specie in substitute_with_species:
             fields.append(f"{specie}_concentration")
         fields = tuple(fields)
-        os.makedirs(self._css_structures_metadata_path)
+        os.makedirs(self._css_structures_metadata_path, exist_ok=True)
         archive_paths = [os.path.join(self._css_structures_path, archive_filename)
                          for archive_filename in os.listdir(self._css_structures_path)]
+        full_css_metadata_list = []
         with (tqdm(range(len(os.listdir(self._css_structures_path))),
                    desc="Collecting metadata of CSS structures",
                    unit=" composition",
@@ -426,9 +441,22 @@ class CSS:
                                             self._css_structures_metadata_path, self._result_path))
               as pool):
             for archive_path in archive_paths:
-                future = pool.submit(self._collect_data_one_composition, archive_path)
-                future.add_done_callback(lambda p: pbar.update())
+                future = pool.submit(self._collect_data_one_composition, archive_path, full_css_metadata_list)
+                full_css_metadata_list.append(future.result())
+                future.add_done_callback(lambda _: pbar.update())
+        self._full_css_metadata = pd.concat(full_css_metadata_list).sort_values(by=['space_group_no', *[f"{specie}_concentration" for specie in substitute_with_species]])
+        self._full_css_metadata.to_pickle(os.path.join(self._css_structures_path, 'full_css_metadata.pkl.gz'))
         self.logger.info("Metadata of CSS structures is collected and saved at %s.", self._css_structures_metadata_path)
+
+    def get_css_structures_metadata_path(self) -> str:
+        """
+            Getter method for css_structures_metadata_path variable. 
+            Can be used for the csslib.tools.vasp.calculator.DataLoader initialization.
+
+            Return:
+                str: css structures metadata folder path.
+        """
+        return self._css_structures_metadata_path
 
     def __repr__(self):
         """
