@@ -1,35 +1,82 @@
+"""
+    Module for visualizing the obtained results. Contains functions for plotting the following graphs:
+    - group to subgroup reduction with color mar
+"""
+
+
 import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
 import pandas as pd
 import re
-import numpy as np
-from pymatgen.symmetry.groups import SpaceGroup, SYMM_DATA
+from csslib.exceptions import VisualizationError
+from csslib.tools.dataloader import DataLoader
 from matplotlib.ticker import MaxNLocator
-import networkx as nx
+from pymatgen.symmetry.groups import SpaceGroup, SYMM_DATA
 
 
 def _spaceGroupConventional(sg: str) -> str:
     """
-    Convert a space group symbol to a conventional form.
-    :param sg: Space group symbol.
-    :return: Formatted space group symbol.
+        Converts a space group symbol to a conventional form.
+        
+        Args:
+            sg (str): space group symbol.
+    
+        Return: 
+            str: formatted space group symbol.
     """
-
     sg = re.sub(r"-\d", lambda x: "\\bar{" + x.group()[1:] + "}", sg)
     return f"${sg}$"
 
 
-def plot_group_subgroup_graph(css_df: pd.DataFrame, node_size: int = 1200) -> None:
+def group_subgroup_diagram(*, css_df: pd.DataFrame | None = None, results_path: str | None = None, 
+                           num_workers: int = 1, figsize: tuple[int]=(15, 10), node_size: int = 1200, cmap: str = 'viridis', 
+                           save_plot: bool = False, fig_path: str = '.', transparent: bool = False, 
+                           dpi: int = 300, bbox_inches: str | None = None, pad_inches: float = 0.1) -> None:
     """
-    Plot the group-subgroup graph.
-    :return: None.
+        Plots the group-subgroup diagram. Requires dataframe with counted number of inequivalent structures for the
+        specified spacegroup number and substitution rates or path to the results directory for aitoparsing of full css info.
+        If both css_df and results_path are empty raises csslib.exceptions.VisualizationError.
+
+        Args: 
+            css_df (pandas.Dataframe | None, optional): dataframe with information about spacegroup distribution. 
+            Defaults to None.
+            results_path (str | None, optional): path to the results folder with .pkl.gz files. Autonatically parses
+            using csslib.tools.dataloader.DataLoader class using predefined transformation function. Defaults to None.
+            num_workers (int, optional): number of workers for parallel processing using csslib.tools.dataloader.Dataloader
+            class. Defaults to 1.
+            figsize (tuple[int], optional): size of the output figure. Defaults to (15, 10).
+            node_size (int, optional): size of nodes. Defaults to 1200.
+            cmap (str, optional): defines the colormap for the figure. Defaults to 'viridis'.
+            save_plot (bool, optional): if True, saves figure in the input directory. Defaults to False.
+            fig_path (str, optional): path to place + filename, where figure will be saved. Defaults to '.'.
+            transperent (bool, optional): if True, the figure background will be transperent. Defaults to False.
+            dpi (int, optional): the figure dpi. Defaults to 300.
+            bbox_inches (str | None, optional): bounding box in inches. Defaults to None.
+            pad_inches (float, optional): amount of padding in inches around the figure when bbox_inches is 'tight'. Defaults to 0.1.
+        
+        Raise:
+
     """
+    if css_df is None and results_path is None:
+        raise VisualizationError('One of the following parameters must be defined:\n- css_df\n- results_path')
+    if css_df is not None and results_path is not None:
+        raise VisualizationError('Both parameters css_df and results_path are setup. Please leave one parameter as None.')
+    
+    if results_path is not None:
+        dataloader = DataLoader(results_path, num_workers=num_workers, transformation_func=lambda df: 
+                                df.groupby(['space_group_no', 'space_group_symbol', *[col for col in df.columns if col.endswith('concentration')]]).agg(cfgs_count=('structure_filename', 'count'), 
+                                                                                                                                                        all_cfgs_count=('weight', 'sum')).reset_index())
+        dataloader()
+        css_df = dataloader.get_structures_df()
+        css_df = css_df.sort_values(['space_group_no', 'space_group_symbol', *[col for col in css_df.columns if col.endswith('concentration')]]).reset_index()
 
     symm_data = SYMM_DATA
     symm_data_subg = symm_data["maximal_subgroups"]
     symm_data_abbr = {v: k for k, v in symm_data["abbreviated_spacegroup_symbols"].items()}
 
     sgs = sorted(css_df["space_group_no"].unique(), reverse=True)
-    sg_info = {sg: ((css_df["space_group_no"] == sg).sum(),
+    sg_info = {sg: (css_df.loc[(css_df["space_group_no"] == sg)]['cfgs_count'].sum(),
                     symm_data_abbr.get(SpaceGroup.from_int_number(sg).symbol,
                                        SpaceGroup.from_int_number(sg).symbol))
                for sg in sgs}
@@ -67,8 +114,8 @@ def plot_group_subgroup_graph(css_df: pd.DataFrame, node_size: int = 1200) -> No
     # overlapping. One can curve them manually to avoid this.
     edges_straight = set(graph.edges) - edges_curved
 
-    fig, ax = plt.subplots(figsize=(15, 10))
-    cmap = "viridis"
+    fig, ax = plt.subplots(figsize=figsize)
+    cmap = cmap
     nx.draw_networkx_nodes(graph, pos, node_color=[np.log(sg_info2[i]) for i in graph.nodes], node_size=node_size,
                            edgecolors="black", linewidths=1, cmap=cmap, vmin=0,
                            vmax=np.log(max([i for i in sg_info2.values()])), ax=ax)
@@ -96,4 +143,7 @@ def plot_group_subgroup_graph(css_df: pd.DataFrame, node_size: int = 1200) -> No
     cbar.ax.yaxis.set_major_locator(MaxNLocator(integer=True))
     cbar.outline.set_visible(False)
     plt.tight_layout()
-    plt.show()
+    if save_plot:
+        plt.savefig(fig_path, transparent, dpi, bbox_inches, pad_inches)
+    else:
+        plt.show()

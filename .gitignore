@@ -31,3 +31,6 @@ uv.lock
 /tests/results/
 /tests/data/results/
 /src/csslib/csslib.log
+
+# Mac files
+.DS_store

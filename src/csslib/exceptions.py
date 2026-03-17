@@ -67,6 +67,34 @@ class ResultsFolderExistError(CSSlibException):
                 'Results folder is exists. Set `rewrite_results` flag as True to rewrite results.')
 
 
+class ResultsFolderNotFoundError(CSSlibException):
+    """
+        Raised when the results folder is not found while processing obtained results for further visualization and analysis.
+    """
+    def __init__(self, message='No such directory.'):
+        """
+            Initialization method of the ResultsFolderNotFoundError class. 
+
+            Args:
+                message (str, optional): Text description of the error.
+        """
+        super().__init__(message)
+
+
+class DataLoaderError(CSSlibException):
+    """
+        Raised when errors in the DataLoader class occurs.
+    """
+    def __init__(self, message='Unexpected error in the DataLoader class is occured.'):
+        """
+            Initialization method of the DataLoaderError class. 
+
+            Args:
+                message (str, optional): Text description of the error.
+        """
+        super().__init__(message)
+
+
 class StructureNotFoundError(CSSlibException):
     """
         Raised when structure .cif file is not found.
@@ -81,6 +109,20 @@ class StructureNotFoundError(CSSlibException):
         super().__init__(message)
 
 
+class VisualizationError(CSSlibException):
+    """
+        Raised when errors in the Visualization module occurs.
+    """
+    def __init__(self, message='Unexpected error in the Visualization class is occured.'):
+        """
+            Initialization method of the VisualizationError class. 
+
+            Args:
+                message (str, optional): Text description of the error.
+        """
+        super().__init__(message)
+
+
 def catch_config_errors(e: ValidationError) -> str:
     """
         Function for processing of the pydantic scheme exceptions. For internal library use! 
@@ -88,7 +130,7 @@ def catch_config_errors(e: ValidationError) -> str:
         Args:
             e (ValidationError): pydantic validation error object
 
-        Returns:
+        Return:
             str: the message with full description of the config fields mistakes. 
     """
     message = '\nThe following configuration errors were detected:\n'

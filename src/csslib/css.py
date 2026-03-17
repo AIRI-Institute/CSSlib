@@ -14,7 +14,6 @@ import warnings
 import zipfile
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from copy import deepcopy
 from csslib.logging_ import get_css_logger, get_supercell_worker_logger, get_collect_worker_logger
 from csslib.config import Config
 from itertools import product
@@ -32,7 +31,7 @@ class CSS:
     """
         Class for searching all possible chemical modifications of user-specified compounds. Runs supercell binary and stores all data obtained from supercell in .pkl.gz format in single/parallel mode.
 
-        Raises:
+        Raise:
             css_exc.ConfigurationNotFoundError
             css_exc.ConfigurationError
             css_exc.ResultsFolderExistError
@@ -53,7 +52,7 @@ class CSS:
                 config_filename (str): relative or absolute path to the .json config file. 
                 rewrite_results (bool, optional): results overwrite flag. Defaults to False.
 
-            Raises:
+            Raise:
                 css_exc.ConfigurationNotFoundError
                 css_exc.ConfigurationError
                 css_exc.ResultsFolderExistError
@@ -109,7 +108,7 @@ class CSS:
         """
             Reads an initial structure from a cif-file.
 
-            Raises:
+            Raise:
                 css_exc.StructureNotFoundError
         """
         try:
@@ -218,8 +217,8 @@ class CSS:
             Args:
                 substitution_labels_natoms (dict): amount of substituted species in the supercell structure.
 
-            Returns:
-                str: Filename.
+            Return:
+                str: filename.
         """
         return "-".join([f"{k}_{v}" for k, v in substitution_labels_natoms.items()]) + ".zip"
 
@@ -254,7 +253,7 @@ class CSS:
             Args:
                 cmd (str): a command to run.
 
-            Returns:
+            Return:
                 int: return code.
         """
         worker_output = subprocess.run(cmd, shell=True, text=True, encoding="utf-8", capture_output=True)
@@ -315,7 +314,7 @@ class CSS:
             Args:
                 cmd (str): a command to run.
 
-            Returns:
+            Return:
                 str or None: error message if something went wrong, None otherwise.
         """
         worker_output = subprocess.run(cmd, shell=True, text=True, encoding="utf-8", capture_output=True)
@@ -427,7 +426,7 @@ class CSS:
               as pool):
             for archive_path in archive_paths:
                 future = pool.submit(self._collect_data_one_composition, archive_path)
-                future.add_done_callback(lambda p: pbar.update())
+                future.add_done_callback(lambda _: pbar.update())
         self.logger.info("Metadata of CSS structures is collected and saved at %s.", self._css_structures_metadata_path)
 
     def __repr__(self):
