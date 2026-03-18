@@ -3,6 +3,10 @@
     - group to subgroup reduction with color mar
 """
 
+__all__ = [
+    "group_subgroup_diagram"
+]
+
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -56,7 +60,7 @@ def group_subgroup_diagram(*, css_df: pd.DataFrame | None = None, results_path: 
             pad_inches (float, optional): amount of padding in inches around the figure when bbox_inches is 'tight'. Defaults to 0.1.
         
         Raise:
-
+            csslib.exceptions.VisualizationError: when no one or both parameters css_df and results_path are defined.
     """
     if css_df is None and results_path is None:
         raise VisualizationError('One of the following parameters must be defined:\n- css_df\n- results_path')

@@ -25,8 +25,8 @@ class Substitution(BaseModel):
             substitution_low_limit_natoms (int): the minimum number of atoms that must be replaced.
             substitution_high_limit_natoms (int): the maximum number of atoms that must be replaced.
             indices_to_substitute (list[int]): the list of atom indices that must be replaced.
-            substitute_with_labels (list[str]):  __description__.
-            labels_to_substitute (list[str]):  __description__.
+            substitute_with_labels (list[str]): labels of chemical elements that will replace the original chemical elements.
+            labels_to_substitute (list[str]): labels of chemical elements that must be replaced.
     """
     model_config = ConfigDict(extra="forbid")
     specie_to_substitute: str
@@ -114,6 +114,8 @@ def get_available_config_fields():
     message += '    - "substitution_low_limit_natoms"\n'
     message += '    - "substitution_high_limit_natoms"\n'
     message += '    - "indices_to_substitute"\n'
+    message += '    - "substitute_with_labels"\n'
+    message += '    - "labels_to_substitute"\n'
     message += 'Example config can be obtained by the `get_example_config` function of `csslib.config`.\n'
     logger.info(message)
 

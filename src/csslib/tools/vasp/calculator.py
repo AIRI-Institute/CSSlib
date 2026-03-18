@@ -1,6 +1,8 @@
 """VASP calculator module."""
 
-__all__ = ["calculator"]
+__all__ = [
+    "calculator"
+]
 
 import pickle
 import gzip

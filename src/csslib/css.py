@@ -71,11 +71,12 @@ class CSS:
             raise css_exc.ConfigurationError(val_err)
 
         self._result_path = os.path.join(self._RESULTS_DIR, self.config.result_dir)
+        self._rewrite_results = rewrite_results
         os.makedirs(self._RESULTS_DIR, exist_ok=True)
         try:
             os.makedirs(self._result_path)
         except FileExistsError:
-            if not rewrite_results:
+            if not self._rewrite_results:
                 raise css_exc.ResultsFolderExistError
 
         self._css_structures_path = os.path.join(self._result_path, self._CSS_STRUCTURES_DIR)
@@ -271,7 +272,7 @@ class CSS:
             Runs Supercell software to create css structures.
         """
         self.logger.info("Preparing to generate CSS structures ...")
-        os.makedirs(self._css_structures_path)
+        os.makedirs(self._css_structures_path, exist_ok=True if self._rewrite_results else False)
         futures = []
         with (tqdm(range(len(self._substitution_labels_natoms_list)),
                    desc="Creating CSS structures",
@@ -345,7 +346,10 @@ class CSS:
             for future in as_completed(futures):
                 if (error_message := future.result()) is not None:
                     pool.shutdown(wait=True, cancel_futures=True)
-                    self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())
+                    if 'supercell: command not found' in error_message:
+                        self.logger.error("%s Install it from the https://orex.github.io/.", error_message.rstrip())
+                    else:
+                        self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())
                     sys.exit(1)
             pool.shutdown(wait=True, cancel_futures=False)
             self.logger.info("Checking out possibility of CSS structures creation is finished successfully!")
@@ -411,7 +415,7 @@ class CSS:
         for specie in substitute_with_species:
             fields.append(f"{specie}_concentration")
         fields = tuple(fields)
-        os.makedirs(self._css_structures_metadata_path)
+        os.makedirs(self._css_structures_metadata_path, exist_ok=True if self._rewrite_results else False)
         archive_paths = [os.path.join(self._css_structures_path, archive_filename)
                          for archive_filename in os.listdir(self._css_structures_path)]
         with (tqdm(range(len(os.listdir(self._css_structures_path))),
