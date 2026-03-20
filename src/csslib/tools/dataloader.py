@@ -88,6 +88,13 @@ class DataLoader:
             unloaded_df = df.drop(index=transformed_df.index).reset_index(drop=True)
             if len(unloaded_df):
                 unloaded_df.to_pickle(os.path.join(copy_unloaded_data_path, os.path.basename(file_path)))
+            else:
+                try:
+                    os.remove(os.path.join(copy_unloaded_data_path, os.path.basename(file_path)))
+                except FileNotFoundError:
+                    pass
+                except PermissionError:
+                    raise DataLoaderError(f'Permission error occured while tried to remove {os.path.join(copy_unloaded_data_path, os.path.basename(file_path))}. Remove it manually.')
         return transformed_df
 
     def __load(self) -> pd.DataFrame:

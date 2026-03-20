@@ -59,7 +59,7 @@ def random_sampling(df: pd.DataFrame, structures_number: int = 1, seed: int = 88
     random.seed(seed)
     max_index = len(df) - 1
     indexes = []
-    while len(indexes) != structures_number:
+    while len(indexes) != structures_number and len(indexes) != len(df):
         number = random.randint(0, max_index)
         if number not in indexes:
             indexes.append(number)
