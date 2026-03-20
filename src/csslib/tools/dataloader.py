@@ -1,9 +1,7 @@
-"""Module with the DataLoader class. Can be used to generate training/test samples, transform data, and prepare it for postprocessing."""
+"""Module with the Loader class. Can be used to generate training/test samples, transform data, and prepare it for postprocessing."""
 
 __all__ = [
     'DataLoader',
-    'ResultsLoader',
-    'VaspLoader'
 ]
 
 
@@ -11,158 +9,192 @@ import gzip
 import os
 import pandas as pd
 import pickle
-from csslib.exceptions import ResultsFolderNotFoundError, DataLoaderError
+from csslib.exceptions import DataLoaderError
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from typing import Callable
-
-
-def _parse_worker(file_path: str, configurations_filter: Callable | None = None, transformation_func: Callable | None = None):
-    """
-        A worker for ProcessPoolExecutor class used by __call__ method of the DataLoader class. Reads configurations from .pkl.gz.
-
-        Args:
-            file_path (str): full or relative path to the .pkl.gz file.
-            configurations_filter (function | None, optional): filter to apply to the configurations set. As the input
-            function must get pandas.Dataframe object and return transformed pandas.Dataframe object. Defaults to None.
-            transformation_func (function | None, optional): transformation function to be applied to the configurations set.
-            As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
-            Defaults to None.
-
-        Return:
-            pandas.DataFrame: table with information about css structures.
-    """
-    with gzip.open(file_path, "rb") as archive:
-        df = pickle.load(archive)
-
-    if configurations_filter is not None:
-        df = configurations_filter(df)
-
-    if transformation_func is not None:
-        df = transformation_func(df)
-
-    return df
 
 
 class DataLoader:
     """
         Data loader of structures for performing VASP calculations and realization of the postprocessing.
     """
-    def __init__(self, folder_path: str, max_structures: int | None = None, num_workers: int = 1, 
-                 store_data: bool = False, store_path: str = '../css_vasp',
-                 configurations_filter: Callable | None = None, transformation_func: Callable | None = None):
+    def __init__(self, path: str, num_workers: int = 1, transformation_function: Callable | None = None,
+                 save_loaded_data: bool = True, save_loaded_data_filepath: str = "<path>/selected.pkl.gz",
+                 copy_unloaded_data: bool = True, copy_unloaded_data_path: str = "<path>/css_unselected"):
         """
             Initialization method for the DataLoader class.
 
             Args:
-                folder_path (str): path to folder with .pkl.gz archives with structures for loading/processing.
-                max_structures (int | None, optional): number of the configuration to load during one call of the DataLoader, 
-                e.g. configurations batch. If None, all configurations will be load. Defaults to None.
-                num_workers (int, optional): number of workers for parallel execution of the DataLoader. 
-                Ignores while max_structures parameter is set. Defaults to 1.
-                store_data (bool, optional): if True stores loaded data in the store_path folder. Defaults to False.
-                store_path (str, optional): path to the folder where loaded data. will be stored. Defaults to '../css_vasp'. 
-                configurations_filter (function | None, optional): filter to apply to the configurations set. As the input
-                function must get pandas.Dataframe object and return transformed pandas.Dataframe object/. Defaults to None.
-                transformation_func (function | None, optional): transformation function to be applied to the configurations set.
+                path (str): path to folder/file with .pkl.gz archive/s with structures for loading/processing.
+                num_workers (int, optional): number of workers for parallel execution of the DataLoader. Defaults to 1.
+                transformation_function (Callable | None, optional): transformation function to be applied to the configurations set.
                 As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
                 Defaults to None.
+                save_loaded_data (bool, optional): if True stores loaded data in the save_loaded_data_filepath. 
+                Uses only when path variable points on the directory. Otherwise, the flag is always changes to False. Defaults to True.
+                save_loaded_data_path (str, optional): path to the file where loaded data will be stored. Defaults to '<path>/selected.pkl.gz'. 
+                copy_unloaded_data (bool, optional): if True copies unloaded data to the copy_unloaded_data_path. Useful when
+                configurations will be iteratively selected from the full css dataset. Uses only when path variable points on the directory. 
+                Otherwise, the flag is always changes to False. Defaults to True.
+                copy_unloaded_data_path (str, optional): path to the folder where unloaded data will be stored. Defaults to '<path>/css_unselected'. 
 
             Raise:
-                csslib.exceptions.ResultsFolderNotFoundError: while results folder is not found or do not contain .pkl.gz files.
+                csslib.exceptions.DataLoaderError: while results folder do not contain .pkl.gz files.
         """
-        if not os.path.isdir(folder_path):
-            raise ResultsFolderNotFoundError(f'Directory {folder_path} is not found.')
+        self.__pkl_gz = None
+        self.__unselected_configuration_were_saved = False
+        if os.path.isdir(path):
+            self.__pkl_gz = [os.path.join(path, archive) for archive in os.listdir(path) if archive.endswith('.pkl.gz')]
+            if not self.__pkl_gz:
+                raise DataLoaderError(f'There are no .pkl.gz files in the {path} directory.')
+            self.__save_loaded_data = save_loaded_data
+            self.__copy_unloaded_data = copy_unloaded_data
+        elif os.path.isfile(path) and path.endswith('.pkl.gz'):
+            self.__pkl_gz = [path]
+            self.__save_loaded_data = False
+            self.__copy_unloaded_data = False
+        else:
+            raise DataLoaderError('path variable should be path to the results folder with .pkl.gz files or to the .pkl.gz file!')
 
-        self._pkl_gz = [os.path.join(folder_path, archive) for archive in os.listdir(folder_path) if archive.endswith('.pkl.gz')]
-        if not self._pkl_gz:
-            raise ResultsFolderNotFoundError(f'There are no .pkl.gz files in the {folder_path} directory.')
-
-        self.max_structures = max_structures
         self.num_workers = num_workers
-        self.store_data = store_data
-        self.store_path = os.path.join(os.path.dirname(folder_path), store_path.split('/')[-1]) if store_path == '../css_vasp' else store_path
-        self._configurations_filter = configurations_filter
-        self._transformation_func = transformation_func
-        self._structures_df = None
-        
-    def apply(self, configurations_filter: Callable | None = None, transformation_func: Callable | None = None,
-              apply_configurations_filter: bool = True, apply_transformation_func: bool = True):
+        self.transformation_function = transformation_function
+        self.save_loaded_data_filepath = os.path.join(os.path.dirname(path), save_loaded_data_filepath.split('/')[-1]) if save_loaded_data_filepath == "<path>/selected.pkl.gz" else save_loaded_data_filepath
+        self.copy_unloaded_data_path = os.path.join(os.path.dirname(path), copy_unloaded_data_path.split('/')[-1]) if copy_unloaded_data_path == "<path>/css_unselected" else copy_unloaded_data_path
+
+        self.__df = self.__load()
+    
+    @staticmethod
+    def __parse_worker(file_path: str, transformation_function: Callable | None = None,
+                       copy_unloaded_data_path: str | None = None) -> pd.DataFrame:
         """
-            Sets and applies or only applies configurations filter and transformation function if they are specified.
+            A worker for ProcessPoolExecutor class used by __load method of the DataLoader class. Reads configurations from .pkl.gz.
 
             Args:
-                configurations_filter (function | None, optional): filter to apply to the configurations set. As the input
-                function must get pandas.Dataframe object and return transformed pandas.Dataframe object. Defaults to None.
-                transformation_func (function | None, optional): transformation function to be applied to the configurations set.
+                file_path (str): full or relative path to the .pkl.gz file.
+                transformation_function (Callable | None, optional): transformation function to be applied to the configurations set.
+                As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
+                Defaults to None.
+                copy_unloaded_data_path (str, optional): path to the folder where unloaded data will be stored. Defaults to None. 
+
+            Return:
+                pandas.DataFrame: table with information about css structures.
+        """
+        with gzip.open(file_path, "rb") as archive:
+            df = pickle.load(archive)
+
+        transformed_df = transformation_function(df) if transformation_function is not None else df
+        if transformation_function is not None and copy_unloaded_data_path is not None:
+            unloaded_df = df.drop(index=transformed_df.index).reset_index(drop=True)
+            if len(unloaded_df):
+                unloaded_df.to_pickle(os.path.join(copy_unloaded_data_path, os.path.basename(file_path)))
+        return transformed_df
+
+    def __load(self) -> pd.DataFrame:
+        """
+            Loads .pkl.gz file/s in serial/parallel mode and stores data in _structures_df attribute.
+            If self.
+
+            Return:
+                pandas.DataFrame: loaded .pkl.gz table.
+        """
+        if self.__copy_unloaded_data:
+            os.makedirs(self.copy_unloaded_data_path, exist_ok=True)
+
+        if self.num_workers == 1 or len(self.__pkl_gz) == 1:
+            results = [self.__parse_worker(pkl, self.transformation_function, self.copy_unloaded_data_path if self.__copy_unloaded_data else None) 
+                       for pkl in tqdm(self.__pkl_gz, desc="Collecting metadata of CSS structures", unit=" .pkl.gz", ncols=200)]
+        else:
+            results = Parallel(n_jobs=self.num_workers, backend="loky")(
+                delayed(self.__parse_worker)(pkl, self.transformation_function, self.copy_unloaded_data_path if self.__copy_unloaded_data else None)
+                for pkl in tqdm(self.__pkl_gz, desc="Collecting metadata of CSS structures", unit=" .pkl.gz", ncols=200)
+            )
+        
+        df = pd.concat(results, ignore_index=True).reset_index(drop=True) if results else pd.DataFrame()
+        if self.__save_loaded_data:
+            df.to_pickle(self.save_loaded_data_filepath)
+        if self.__copy_unloaded_data:
+            self.__unselected_configuration_were_saved = True
+        return df
+
+    def apply(self, transformation_function: Callable):
+        """
+            Sets and applies transformation function.
+
+            Args:
+                transformation_function (Callable): transformation function to be applied to the configurations set.
                 As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
                 Defaults to None.
 
             Raise:
-                csslib.exceptions.DataLoaderError: if DataLoader.__structures_df is not defined.
+                csslib.exceptions.DataLoaderError: if _structures_df attribute is not defined.
         """
-        if self._structures_df is None:
-            raise DataLoaderError('DataLoader.__structures_df attribute is not defined.')
+        if self.__df is None:
+            raise DataLoaderError('Data from .pkl.gz is not read yet.')
 
-        self._configurations_filter = configurations_filter if configurations_filter is not None else self._configurations_filter
-        self._transformation_func = transformation_func if transformation_func is not None else self._transformation_func
-        
-        if self._configurations_filter is not None and apply_configurations_filter:
-            self._structures_df = self._configurations_filter(self._structures_df)
-        if self._transformation_func is not None and apply_transformation_func:
-            self._structures_df = self._transformation_func(self._structures_df)
+        self.transformation_function = transformation_function        
+        self.__df = self.transformation_function(self.__df)
     
-    def get_structures_df(self):
+    def save_df(self, filepath: str):
+        """
+            Saves dataframe in the .pkl.gz file. Useful when df attribute is changed by apply method and new 
+            dataframe should be saved.
+
+            Args:
+                filepath (str): full or relative path to the archive.
+        """
+        self.__df.to_pickle(filepath)
+
+    def select_add(self, select_path: str | None = None, transformation_function: Callable | None = None, 
+                   save_merged_df_to: str | None = None):
+        """
+            Additionaly selects and adds configurations to the df attribute. Can be used in the active learning procedure.
+
+            Args:
+                select_path (str | None, optional): path to the folder with .pkl.gz files from which configurations will be selected.
+                Can be empty if path parameter in __init__ method was a path to the directory. Defaults to None.
+                transformation_function (Callable | None, optional): transformation function to be applied to the loaded data.
+                Can be empty if transformation_function attribute was already setup by other methods. Defaults to None.
+                save_merged_df_to (str | None, optional): path to the .pkl.gz file in which dataset will be saved. Defaults to None.
+
+            Raise:
+                csslib.exceptions.DataLoaderError: if unselected configuration were not saved earlier and select_path parameter is None or
+                transformation_function attribute is None and transformation_function parameter is None.
+        """
+        if not self.__unselected_configuration_were_saved and select_path is None:
+            raise DataLoaderError("select_path attribute must be filled when unselected data was not saved earlier.")
+        if self.transformation_function is None and transformation_function is None:
+            raise DataLoaderError("transformation_function parameter must be filled when it was not set earlier.")
+
+        if not self.__unselected_configuration_were_saved or select_path:
+            self.copy_unloaded_data_path = select_path
+        self.__pkl_gz = [os.path.join(self.copy_unloaded_data_path, archive) for archive in os.listdir(self.copy_unloaded_data_path) if archive.endswith('.pkl.gz')]
+        
+        if transformation_function is not None:
+            self.transformation_function = transformation_function
+
+        self.__copy_unloaded_data = True
+        self.__save_loaded_data = False
+        
+        added_df = self.__load()
+        self.__df = pd.concat([self.__df, added_df], ignore_index=True)
+        self.save_df(save_merged_df_to if save_merged_df_to is not None else self.save_loaded_data_filepath)
+
+    def set_transformation_function(self, transformation_function: Callable):
+        """
+            Sets transformation_function attribute.
+
+            Args:
+                transformation_function (Callable): transformation function to be applied to the configurations set.
+                As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
+        """
+        self.transformation_function = transformation_function
+
+    def get_df(self) -> pd.DataFrame:
         """
             Getter method for the __structures_df attribute.
+
+            Return:
+                pandas.DataFrame: df attribute with information about the css.
         """
-        return self._structures_df
-
-
-class ResultsLoader(DataLoader):
-    """
-        DataLoader subclass for results loading.
-    """
-    def __init__(self, folder_path: str, num_workers: int = 1, transformation_func: Callable | None = None):
-        """
-            Initialization method for the ResultsLoader class.
-
-            Args:
-                folder_path (str): path to folder with .pkl.gz archives with structures for loading/processing.
-                num_workers (int, optional): number of workers for parallel execution of the ResultsLoader. 
-                Ignores while max_structures parameter is set. Defaults to 1.
-                transformation_func (function | None, optional): transformation function to be applied to the configurations set.
-                As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
-                Defaults to None.
-        """
-        super().__init__(folder_path, max_structures=None, num_workers=num_workers, store_data=False, 
-                         configurations_filter=None, transformation_func=transformation_func)
-
-    def __call__(self):
-        results = Parallel(n_jobs=self.num_workers, backend="loky")(
-            delayed(_parse_worker)(pkl, transformation_func=self._transformation_func)
-            for pkl in tqdm(self._pkl_gz, desc="Collecting metadata of CSS structures", unit=" .pkl.gz", ncols=200)
-        )
-        self._structures_df = pd.concat(results, ignore_index=True) if results else pd.DataFrame()
-
-
-class VaspLoader(DataLoader):
-    """
-        DataLoader subclass for loading structures for VASP calculations.
-    """
-    def __init__(self, folder_path: str, max_structures: int, store_data: bool = True, store_path: str = '../css_vasp',
-                 configurations_filter: Callable | None = None):
-        """
-            Initialization method for the DataLoader class.
-
-            Args:
-                folder_path (str): path to folder with .pkl.gz archives with structures for loading/processing.
-                max_structures (int): number of the configuration to load during one call of the DataLoader, 
-                e.g. configurations batch.
-                store_data (bool, optional): if True stores loaded data in the store_path folder. Defaults to True.
-                store_path (str, optional): path to the folder where loaded data. will be stored. Defaults to '../css_vasp'. 
-                configurations_filter (function | None, optional): filter to apply to the configurations set. As the input
-                function must get pandas.Dataframe object and return transformed pandas.Dataframe object/. Defaults to None.
-        """
-        super().__init__(folder_path, max_structures, num_workers=1, store_data=store_data, store_path=store_path,
-                         configurations_filter=configurations_filter, transformation_func=None)
+        return self.__df

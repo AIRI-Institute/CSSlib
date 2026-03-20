@@ -67,20 +67,6 @@ class ResultsFolderExistError(CSSlibException):
                 'Results folder is exists. Set `rewrite_results` flag as True to rewrite results.')
 
 
-class ResultsFolderNotFoundError(CSSlibException):
-    """
-        Raised when the results folder is not found while processing obtained results for further visualization and analysis.
-    """
-    def __init__(self, message='No such directory.'):
-        """
-            Initialization method of the ResultsFolderNotFoundError class. 
-
-            Args:
-                message (str, optional): Text description of the error.
-        """
-        super().__init__(message)
-
-
 class DataLoaderError(CSSlibException):
     """
         Raised when errors in the DataLoader class occurs.
