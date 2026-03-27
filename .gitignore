@@ -6,6 +6,7 @@
 /__pycache__/
 /src/csslib/__pycache__/
 /src/csslib/tools/__pycache__/
+/src/csslib/tools/calculations/__pycache__/
 /tests/__pycache__/
 /.ipynb_checkpoints/
 /tests/.ipynb_checkpoints/
@@ -34,3 +35,6 @@ uv.lock
 
 # Mac files
 .DS_store
+
+# TODO.md
+/TODO.md

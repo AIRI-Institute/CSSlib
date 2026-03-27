@@ -95,6 +95,48 @@ class StructureNotFoundError(CSSlibException):
         super().__init__(message)
 
 
+class CalculatorError(CSSlibException):
+    """
+        Raised when errors in the Calculator class occurs.
+    """
+    def __init__(self, message="Unexpected error in the Calculator class is occured."):
+        """
+            Initialization method of the CalculatorError class.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to "Unexpected error in the Calculator class is occured.".
+        """
+        super().__init__(message)
+
+
+class WorkerError(CSSlibException):
+    """
+        Raised when errors in the Worker class occurs.
+    """
+    def __init__(self, message="Unexpected error in the Worker class is occured."):
+        """
+            Initialization method of the WorkerError class.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to "Unexpected error in the Worker class is occured.".
+        """
+        super().__init__(message)
+
+
+class RemoteWorkerError(CSSlibException):
+    """
+        Raised when errors in the RemoteWorker class occurs.
+    """
+    def __init__(self, message="Unexpected error in the RemoteWorker class is occured."):
+        """
+            Initialization method of the RemoteWorkerError class.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to "Unexpected error in the RemoteWorker class is occured.".
+        """
+        super().__init__(message)
+
+
 class VisualizationError(CSSlibException):
     """
         Raised when errors in the Visualization module occurs.
