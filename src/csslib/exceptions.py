@@ -109,6 +109,20 @@ class CalculatorError(CSSlibException):
         super().__init__(message)
 
 
+class RemoteConnectionError(CSSlibException):
+    """
+        Raised when errors in the RemoteConnection class occurs.
+    """
+    def __init__(self, message="Unexpected error in the RemoteConnection class is occured."):
+        """
+            Initialization method of the RemoteConnectionError class.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to "Unexpected error in the Worker class is occured.".
+        """
+        super().__init__(message)
+
+
 class WorkerError(CSSlibException):
     """
         Raised when errors in the Worker class occurs.
