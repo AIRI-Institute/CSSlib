@@ -2,8 +2,6 @@
 
 __all__ = []
 
-import paramiko
-
 
 class Worker: # use write_file to write input
     """

@@ -118,7 +118,21 @@ class RemoteConnectionError(CSSlibException):
             Initialization method of the RemoteConnectionError class.
 
             Args:
-                message (str, optional): Text description of the error. Defaults to "Unexpected error in the Worker class is occured.".
+                message (str, optional): Text description of the error. Defaults to "Unexpected error in the RemoteConnection class is occured.".
+        """
+        super().__init__(message)
+
+
+class SchedulerError(CSSlibException):
+    """
+        Raised when errors in the Scheduler class occurs.
+    """
+    def __init__(self, message="Unexpected error in the Scheduler class is occured."):
+        """
+            Initialization method of the SchedulerError class.
+
+            Args:
+                message (str, optional): Text description of the error. Defaults to "Unexpected error in the Scheduler class is occured.".
         """
         super().__init__(message)
 

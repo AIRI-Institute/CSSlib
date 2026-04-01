@@ -45,7 +45,8 @@ class RemoteConnection:
             self.__ssh_client.load_host_keys(host_keys_path)
             
         self.connection_status = ConnectionStatus.NONINITIALIZED
-        while (self.connection_status != ConnectionStatus.CONNECTED or connection_attempts != 0):
+        self.has_slurm = False
+        while (self.connection_status != ConnectionStatus.CONNECTED and connection_attempts != 0):
             self.connect()
             connection_attempts -= 1
         
@@ -60,6 +61,7 @@ class RemoteConnection:
             self.__ssh_client.connect(hostname=self.__hostname, username=self.__username, port=self.__port, password=self.__password)
             self.connection_status = ConnectionStatus.CONNECTED
             self.__open_sftp()
+            self.__check_slurm()
         except paramiko.AuthenticationException:
             message = f'Authentication failed when tried to connect to {self.__hostname} on port {self.__port} for user - {self.__username}. ' 
             message += 'Incorrect username/password/private key or key format (e.g., PuTTY .ppk instead of OpenSSH format). '
@@ -71,7 +73,7 @@ class RemoteConnection:
             raise RemoteConnectionError(f"Host key mismatch when tried to connect to {self.__hostname} on port {self.__port} for user - {self.__username}. The server's host key is unknown or has changed.")
         except (paramiko.ssh_exception.SSHException, socket.error, socket.gaierror) as e:
             # self.logger.warning(f"SSH issue: {e}")
-            self.__connection_status = ConnectionStatus.FAILED
+            self.connection_status = ConnectionStatus.FAILED
             # self.logger.warning(f"Socket/Network error: {e}")
     
     def __open_sftp(self):
@@ -79,6 +81,14 @@ class RemoteConnection:
             Opens sftp connection to the remote server.
         """
         self.__sftp_client = self.__ssh_client.open_sftp()
+        
+    def __check_slurm(self):
+        """
+            Checks whether server has SLURM system.
+        """
+        stdin, stdout, stderr = self.__ssh_client.exec_command('squeue')
+        if b'command not found' not in stderr.read():
+            self.has_slurm = True
         
     def __call__(self):
         """
