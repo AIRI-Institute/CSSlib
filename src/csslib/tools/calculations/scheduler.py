@@ -101,8 +101,17 @@ class Scheduler:
 
             Args:
                 connections (dict): dictionary with RemoteConnection objects.
+
+            Raise:
+                csslib.exceptions.SchedulerError: if at least one loaded server has not contain the SLURM system, but the cmd command for the SLURM system was passed.
         """
         self.__connections = connections
+        for server in self.__connections:
+            has_slurm = self.__connections[server].has_slurm
+            cmd_str_for_slurm = (isinstance(self.__cmd, str) and any(flag in self.__cmd for flag in Scheduler.SUPPORTING_CMD_PREFIXES_SLURM))
+            cmd_dict_for_slurm = (isinstance(self.__cmd, dict) and any(flag in self.__cmd[server] for flag in Scheduler.SUPPORTING_CMD_PREFIXES_SLURM))
+            if (has_slurm and not (cmd_str_for_slurm or cmd_dict_for_slurm)) or (not has_slurm and (cmd_str_for_slurm or cmd_dict_for_slurm)):
+                raise SchedulerError('Mismatch between the cmd and connection is found. If connection has the SLURM system you must use the cmd for SLURM system. If connection has the MPI system you must use the cmd for MPI system.')
 
     def __check_slurm(self, server: str, ssh_stdout: paramiko.ChannelFile) -> int:
         """
@@ -198,7 +207,7 @@ class Scheduler:
             workers_number = sum(self.__workers.values())
             remain_workers_to_remove = workers_number - self.__max_workers
             while remain_workers_to_remove:
-                min_cores = min([self.__cores[server] for server in self.__cores if server in self.__workers])
+                min_cores = min([self.__cores[server] for server in self.__cores if (server in self.__workers and self.__cores[server] != -1)])
                 workers_to_reduce = {server: value for server, value in self.__workers.items() if self.__cores[server] == min_cores}
                 remain_workers_to_remove, workers = self.__uniform_reduce(workers_to_reduce, remain_workers_to_remove)
                 for server in workers:
