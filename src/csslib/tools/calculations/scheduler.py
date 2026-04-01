@@ -9,7 +9,7 @@ __all__ = []
 
 
 import paramiko
-from csslib.exceptions import SchedulerError
+from csslib.exceptions import SchedulerError, RemoteConnectionError
 
 
 class Scheduler:
@@ -21,13 +21,13 @@ class Scheduler:
     PARALLEL_FLAGS_SLURM_CPU_PER_TASK = ['-c', '--cpus-per-task']
     SLURM_PARTITION_FLAGS = ['-p', '--partition']
     SLURM_NODE_FLAGS = ['-N', '--nodes']
-    
+
     def __init__(self, cmd: str | dict, max_workers: int | dict | None = None):
         """
             Initialization method for the Scheduler class.
 
             Args:
-                cmd (str | dict): cmd command or commands which will be parsed by Scheduler for the resources distribution. 
+                cmd (str | dict): cmd command or commands which will be parsed by Scheduler for the resources distribution.
                 max_workers (int | dict | None): maximal number of workers on the local machine or server/servers. If None then number of workers
                 will be calculated as max_cpu_number (available on machine) - cpu_count (from cmd string) * max_workers.
         """
@@ -36,34 +36,34 @@ class Scheduler:
         self.__max_workers = max_workers
         self.__workers = dict()
         self.__connections = None
-        
+
         self.__parse_cmd()
-    
+
     def __verify_prefix(self, prefix: str):
         """
-            Verifies the first element of the splitted cmd and raises an exception if this prefix is not in the Scheduler.SUPPORTING_CMD_PREFIXES. 
-            
+            Verifies the first element of the splitted cmd and raises an exception if this prefix is not in the Scheduler.SUPPORTING_CMD_PREFIXES.
+
             Args:
                 prefix (str): first element of the splitted cmd string.
-            
+
             Raise:
                 csslib.exceptions.SchedulerError: if prefix not in the SUPPORTING_CMD_PREFIXES attribute.
-        """ 
+        """
         if prefix not in Scheduler.SUPPORTING_CMD_PREFIXES_MPI and prefix not in Scheduler.SUPPORTING_CMD_PREFIXES_SLURM:
             message = f'Cmd prefix is not in the list of supporting cmd prefixes. Supporting cmd prefixes are: {Scheduler.SUPPORTING_CMD_PREFIXES_MPI} and {Scheduler.SUPPORTING_CMD_PREFIXES_SLURM}. '
             message += "If serial calculation is required use '#' symbol at the start of the cmd."
             raise SchedulerError(message)
-    
+
     def __analyse_tokens(self, tokens: list) -> int:
         """
             Analyses the given list of tokens and returns the number of cores per server.
-            
+
             Return:
                 int: cores per server.
         """
         cores = None
         if tokens[0][0] == '#':
-            cores = 1 
+            cores = 1
         else:
             self.__verify_prefix(tokens[0])
             if tokens[0] in Scheduler.SUPPORTING_CMD_PREFIXES_MPI:
@@ -81,10 +81,10 @@ class Scheduler:
                         cpu_per_task = int(tokens[indx + 1])
                 cores = ntasks * cpu_per_task
         return cores
-    
+
     def __parse_cmd(self):
         """
-            Parses str or dict cmd object and extractes number of cores on the one task per server_ip. If cmd contains '#' symbol verification step will be skiped. 
+            Parses str or dict cmd object and extractes number of cores on the one task per server_ip. If cmd contains '#' symbol verification step will be skiped.
         """
         if isinstance(self.__cmd, str):
             tokens = self.__cmd.split()
@@ -94,29 +94,29 @@ class Scheduler:
             for server in self.__cmd:
                 tokens = self.__cmd[server].split()
                 self.__cores[server] = self.__analyse_tokens(tokens)
-                        
+
     def load_connections(self, connections: dict):
         """
             Loads connections dict and saves it in the connections protected attribute.
-            
+
             Args:
                 connections (dict): dictionary with RemoteConnection objects.
         """
         self.__connections = connections
-    
+
     def __check_slurm(self, server: str, ssh_stdout: paramiko.ChannelFile) -> int:
         """
             Checks SLURM system partitions for MaxCPUs, MaxNodes and MaxSubmit parameters. Verifies that MaxCPUs greater or equal to the number of
             cores given in the cmd command. Analogously for the MaxNodes parameter.
-        
+
             Args:
                 server (str): name of the server.
                 ssh_stdout (paramiko.ChannelFile): return of the 'sacctmgr show user -s -P -n format=Partition,MaxNodes,MaxCPUs,MaxSubmit' commnand.
-        
+
             Raise:
                 csslib.exceptions.SchedulerError: if partition flag is not set for the SLURM system or partition from the cmd is not found on the remote server.
                 Also raises if MaxCPUs or MaxNodes parameters overestimated in the cmd.
-                
+
             Return:
                 int: MaxSubmit parameter if all checks are passed.
         """
@@ -153,59 +153,121 @@ class Scheduler:
         partition = cmd[cmd.index('--partition') + len('--partition') + 1:].split()[0] if '--partition' in cmd else cmd[cmd.index('-p') + len('-p') + 1:].split()[0]
         if partition not in table:
             raise SchedulerError('Partition from the cmd is not found on the remote server.')
-        if table[partition]['MaxCPUs'] is not None and table[partition]['MaxCPUs'] < self.__cores[server]:
+        if table[partition]['MaxCPUs'] is not None and ((isinstance(self.__cores, dict) and table[partition]['MaxCPUs'] < self.__cores[server]) or (isinstance(self.__cores, int) and table[partition]['MaxCPUs'] < self.__cores)):
             raise SchedulerError('MaxCPUs parameter on the SLURM system is lower than passed through the cmd cores number.')
         if table[partition]['MaxNodes'] is not None and table[partition]['MaxNodes'] < nodes_number:
             raise SchedulerError('MaxNodes parameter on the SLURM system is lower than passed through the cmd nodes number.')
         return table[partition]['MaxSubmit']
-    
+
+    @staticmethod
+    def __uniform_reduce(workers: dict, remain_workers_to_remove: int) -> tuple[int, dict]:
+        """
+            Performes uniform reduce of the workers dictionaries with equal number of cores.
+
+            Args:
+                workers (dict): dictionary with number of workers per server.
+                remain_workers_to_remove (int): number of workers which should be removed after removing cycles.
+
+            Return:
+
+        """
+        workers_number = sum(workers.values())
+        if remain_workers_to_remove >= workers_number:
+            for server in workers:
+                workers[server] = 0
+            remain_workers_to_remove -= workers_number
+        else:
+            while remain_workers_to_remove:
+                max_workers = max(workers.values())
+                for server in workers:
+                    if workers[server] == max_workers and workers[server] > 0:
+                        workers[server] -= 1
+                        remain_workers_to_remove -= 1
+                        break
+        return remain_workers_to_remove, workers
+
+    def __reduce_workers_number(self):
+        """
+            Reduces number of workers if max_workers attribute lower than the sum of workers evaluated for max_workers = None.
+            Makes priority for servers where the cmd command contains maximal number of cores.
+        """
+        if isinstance(self.__cores, int):
+            _, self.__workers = self.__uniform_reduce(self.__workers, sum(self.__workers.values()) - self.__max_workers)
+            [self.__workers.pop(server) for server in self.__workers if self.__workers[server] == 0]
+        elif isinstance(self.__cores, dict):
+            workers_number = sum(self.__workers.values())
+            remain_workers_to_remove = workers_number - self.__max_workers
+            while remain_workers_to_remove:
+                min_cores = min([self.__cores[server] for server in self.__cores if server in self.__workers])
+                workers_to_reduce = {server: value for server, value in self.__workers.items() if self.__cores[server] == min_cores}
+                remain_workers_to_remove, workers = self.__uniform_reduce(workers_to_reduce, remain_workers_to_remove)
+                for server in workers:
+                    if workers[server]:
+                        self.__workers[server] = workers[server]
+                    else:
+                        self.__workers.pop(server)
+
     def distribute_workers(self):
         """
             Distributes workers between the given connections dictionary. Sets a number of workers per server.
+
+            Raise:
+                csslib.exceptions.SchedulerError: if method was called before load_connections.
         """
+        if self.__connections is None:
+            raise SchedulerError('Connections must be loaded into Scheduler before this operation.')
         available_resources = dict()
         for server in self.__connections:
             connection = self.__connections.get(server)
             ssh = connection()['SSH']
             if not connection.has_slurm:
-                stdin, stdout, stderr = ssh.exec_command('nproc')
+                try:
+                    stdin, stdout, stderr = ssh.exec_command('nproc')
+                except EOFError:
+                    raise RemoteConnectionError('EOFError. This error can awake if server which you entered is unknown. Before the use of the csslib please append all servers to known hosts.')
                 nproc = int(stdout.read())
                 available_resources[server] = nproc
             else:
-                stdin, stdout, stderr = ssh.exec_command('sacctmgr show user -s -P -n format=Partition,MaxNodes,MaxCPUs,MaxSubmit')
+                try:
+                    stdin, stdout, stderr = ssh.exec_command('sacctmgr show user -s -P -n format=Partition,MaxNodes,MaxCPUs,MaxSubmit')
+                except EOFError:
+                    raise RemoteConnectionError('EOFError. This error can awake if server which you entered is unknown. Before the use of the csslib please append all servers to known hosts.')
                 available_resources[server] = self.__check_slurm(server, stdout)
-        
-        if self.__max_workers is None:
+        if self.__max_workers is None or isinstance(self.__max_workers, int):
             for server in available_resources:
                 if not self.__connections[server].has_slurm:
                     workers = 0
-                    if self.__cores[server] == -1:
+                    cores = self.__cores[server] if isinstance(self.__cores, dict) else self.__cores
+                    if cores == -1:
                         self.__workers[server] = 1
                     else:
-                        while self.__cores[server] * workers <= available_resources[server]:
+                        while cores * workers <= available_resources[server]:
                             self.__workers[server] = workers
                             workers += 1
                 else:
                     self.__workers[server] = available_resources[server]
+            if isinstance(self.__max_workers, int):
+                sum_workers = sum(self.__workers.values())
+                if sum_workers > self.__max_workers:
+                    self.__reduce_workers_number()
         elif isinstance(self.__max_workers, dict):
             for server in available_resources:
                 if not self.__connections[server].has_slurm:
                     workers = 0
-                    if self.__cores[server] == 1:
+                    cores = self.__cores[server] if isinstance(self.__cores, dict) else self.__cores
+                    if cores == -1 and self.__max_workers[server]:
                         self.__workers[server] = 1
                     else:
-                        while self.__cores[server] * workers <= available_resources[server] and workers <= self.__max_workers[server]:
+                        while cores * workers <= available_resources[server] and workers <= self.__max_workers[server]:
                             self.__workers[server] = workers
                             workers += 1
                 else:
                     self.__workers[server] = available_resources[server] if available_resources[server] <= self.__max_workers[server] else self.__max_workers[server]
-        else:
-            ...    
-                
+
     def __call__(self, connections: dict | None = None):
         """
             Call method of the Scheduler class. Loads connections if they are passed through __call__, distributes workers and returns the resources distribution.
-            
+
             Args:
                 connections (dict | None, optional): dictionary with connections to load into Scheduler. Defaults to None.
         """
