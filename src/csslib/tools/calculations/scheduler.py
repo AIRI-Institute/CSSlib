@@ -271,6 +271,8 @@ class Scheduler:
             Raise:
                 csslib.exceptions.SchedulerError: if method was called before load_connections.
         """
+        if self.__connections is None:
+            raise SchedulerError('Connections must be loaded into Scheduler before this operation.')
         available_resources = dict()
         if self.__use_local:
             result = subprocess.run('squeue', capture_output=True, text=True, shell=True) 
