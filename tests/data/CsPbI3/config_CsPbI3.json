@@ -8,13 +8,15 @@
       "specie_to_substitute": "Pb",
       "substitute_with": "Cd",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.05
+      "substitution_high_limit": 0.05,
+      "is_fictive": false
     },
     {
       "specie_to_substitute": "I",
       "substitute_with": "Br",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.06
+      "substitution_high_limit": 0.06,
+      "is_fictive": false
     }
   ]
 }

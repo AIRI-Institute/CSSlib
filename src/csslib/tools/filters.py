@@ -12,18 +12,28 @@ from functools import partial
 from typing import Callable
 
 
-def load_function(function: Callable, **kwargs) -> Callable:
+def load_function(function: Callable, *args, **kwargs) -> Callable:
     """
-        Loads filter function and tranfer parameters to it. Using functools.partial method.
+        Loads filter function and tranfer parameters to it. Using the closures method: contain function-in-function and returns the preinitialized function.
 
         Args:
             function (Callable): function which should be loaded.
-            kwargs (dict, optional): args which should be transfer to the function.
+            args (tuple, optional): args which should be transfer to the function.
+            kwargs (dict, optional): kwargs which should be transfer to the function.
 
         Return:
             Callable: preinitialized function.
     """
-    return partial(function, **kwargs)
+    def load_df(df: pd.DataFrame):
+        """
+            Loads dataframe to the preinitialized function passed to the load_function.
+            
+            Args:
+                df (pandas.DataFrame): object, which will be used by the function.
+        """
+        return function(df, *args, **kwargs)
+    
+    return load_df
 
 
 def split_by_spacegroup(df: pd.DataFrame, space_group_no: int, greater_than_or_equal_to: bool = True) -> pd.DataFrame:

@@ -8,19 +8,22 @@
       "specie_to_substitute": "V",
       "substitute_with": "Ti",
       "substitution_low_limit": 0.0038,
-      "substitution_high_limit": 0.0074
+      "substitution_high_limit": 0.0074,
+      "is_fictive": false
     },
     {
       "specie_to_substitute": "V",
       "substitute_with": "Cr",
       "substitution_low_limit": 0.0038,
-      "substitution_high_limit": 0.0074
+      "substitution_high_limit": 0.0074,
+      "is_fictive": false
     },
     {
       "specie_to_substitute": "U",
       "substitute_with": "H",
       "substitution_low_limit": 0.0075,
-      "substitution_high_limit": 0.0100
+      "substitution_high_limit": 0.0100,
+      "is_fictive": false
     }
   ]
 }

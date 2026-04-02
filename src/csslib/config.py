@@ -20,6 +20,7 @@ class Substitution(BaseModel):
             substitute_with (str): the chemical element that will replace the original chemical element.
             substitution_low_limit (float): lower boundary of the substitution. Restrictions: >= 0 and < 1. Example: 0.05.
             substitution_high_limit (float): higher boundary of the substitution. Restrictions: > 0, <= 1 and > substitution_low_limit. Example: 0.5.
+            is_fictive (bool): if True, the atom will be marked as fictive.
         
         Fields that must be empty:
             substitution_low_limit_natoms (int): the minimum number of atoms that must be replaced.
@@ -33,6 +34,7 @@ class Substitution(BaseModel):
     substitute_with: str
     substitution_low_limit: float
     substitution_high_limit: float
+    is_fictive: bool
     substitution_low_limit_natoms: int | None = None
     substitution_high_limit_natoms: int | None = None
     indices_to_substitute: list[int] | None = None
@@ -44,7 +46,8 @@ class Substitution(BaseModel):
         message += f'      specie_to_substitute="{self.specie_to_substitute}",\n'
         message += f'      substitute_with="{self.substitute_with}",\n'
         message += f'      substitution_low_limit={self.substitution_low_limit},\n'
-        message += f'      substitution_high_limit={self.substitution_high_limit},\n    )'
+        message += f'      substitution_high_limit={self.substitution_high_limit},\n'
+        message += f'      is_fictive={self.is_fictive}\n    )'
         return message
       
     def __str__(self):
@@ -110,6 +113,7 @@ def get_available_config_fields():
     message += '    - "substitute_with" - string with with a chemical element that will replace the original chemical element (mandatory)\n'
     message += '    - "substitution_low_limit" - float value containing lower boundary of the substitution (mandatory). Example: 0.05\n'
     message += '    - "substitution_high_limit" - float value containing higher boundary of the substitution (mandatory). Example: 0.5\n'
+    message += '    - "is_fictive" - if True, the substitution atom will be marked as fictive (mandatory).\n'
     message += '    Internal parameters:\n'
     message += '    - "substitution_low_limit_natoms"\n'
     message += '    - "substitution_high_limit_natoms"\n'
@@ -135,13 +139,15 @@ def get_example_config():
       "specie_to_substitute": "X",
       "substitute_with": "Y",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.05
+      "substitution_high_limit": 0.05,
+      "is_fictive": false
     },
     {
       "specie_to_substitute": "E",
       "substitute_with": "N",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.06
+      "substitution_high_limit": 0.06,
+      "is_fictive": true
     }
   ]
 }'''

@@ -8,25 +8,29 @@
       "specie_to_substitute": "W",
       "substitute_with": "Mo",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.3333333
+      "substitution_high_limit": 0.3333333,
+      "is_fictive": false
     },
     {
       "specie_to_substitute": "W",
       "substitute_with": "U",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.1666667
+      "substitution_high_limit": 0.1666667,
+      "is_fictive": true
     },
     {
       "specie_to_substitute": "Se",
       "substitute_with": "S",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.6666667
+      "substitution_high_limit": 0.6666667,
+      "is_fictive": false
     },
     {
       "specie_to_substitute": "Se",
       "substitute_with": "Np",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.3333333
+      "substitution_high_limit": 0.3333333,
+      "is_fictive": true
     }
   ]
 }

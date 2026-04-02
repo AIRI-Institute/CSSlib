@@ -4,7 +4,7 @@ __all__ = [
     "CSS"
 ]
 
-import csslib.exceptions as css_exc
+
 import os
 import pandas as pd
 import re
@@ -16,6 +16,7 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from csslib.logging_ import get_css_logger, get_supercell_worker_logger, get_collect_worker_logger
 from csslib.config import Config
+from csslib.exceptions import catch_config_errors, ConfigurationNotFoundError, ConfigurationError, ResultsFolderExistError, StructureNotFoundError, ValidationError
 from itertools import product
 from math import prod
 from pymatgen.analysis.defects.generators import VoronoiInterstitialGenerator
@@ -32,10 +33,10 @@ class CSS:
         Class for searching all possible chemical modifications of user-specified compounds. Runs supercell binary and stores all data obtained from supercell in .pkl.gz format in single/parallel mode.
 
         Raise:
-            css_exc.ConfigurationNotFoundError
-            css_exc.ConfigurationError
-            css_exc.ResultsFolderExistError
-            css_exc.StructureNotFoundError
+            csslib.exceptions.ConfigurationNotFoundError
+            csslib.exceptions.ConfigurationError
+            csslib.exceptions.ResultsFolderExistError
+            csslib.exceptions.StructureNotFoundError
     """
     _RESULTS_DIR = "results"
     _CSS_STRUCTURES_DIR = "css_structures"
@@ -53,22 +54,23 @@ class CSS:
                 rewrite_results (bool, optional): results overwrite flag. Defaults to False.
 
             Raise:
-                css_exc.ConfigurationNotFoundError
-                css_exc.ConfigurationError
-                css_exc.ResultsFolderExistError
+                csslib.exceptions.ConfigurationNotFoundError
+                csslib.exceptions.ConfigurationError
+                csslib.exceptions.ResultsFolderExistError
+                csslib.exceptions.ValidationError
         """
         if not os.path.isfile(config_filename):
-            raise css_exc.ConfigurationNotFoundError(f'{config_filename} is not found.')
+            raise ConfigurationNotFoundError(f'{config_filename} is not found.')
 
         json_data, val_err = None, None
         with open(config_filename, 'rb') as f:
             json_data = f.read()
         try:
             self.config = Config.model_validate_json(json_data)
-        except css_exc.ValidationError as e:
-            val_err = css_exc.catch_config_errors(e)
+        except ValidationError as e:
+            val_err = catch_config_errors(e)
         if val_err is not None:
-            raise css_exc.ConfigurationError(val_err)
+            raise ConfigurationError(val_err)
 
         self._result_path = os.path.join(self._RESULTS_DIR, self.config.result_dir)
         self._rewrite_results = rewrite_results
@@ -77,7 +79,7 @@ class CSS:
             os.makedirs(self._result_path)
         except FileExistsError:
             if not self._rewrite_results:
-                raise css_exc.ResultsFolderExistError
+                raise ResultsFolderExistError
 
         self._css_structures_path = os.path.join(self._result_path, self._CSS_STRUCTURES_DIR)
         self._css_structures_metadata_path = os.path.join(self._result_path, self._CSS_STRUCTURES_METADATA_DIR)
@@ -110,12 +112,12 @@ class CSS:
             Reads an initial structure from a cif-file.
 
             Raise:
-                css_exc.StructureNotFoundError
+                csslib.exceptions.StructureNotFoundError
         """
         try:
             self._structure = Structure.from_file(self.config.structure_filename)
         except FileNotFoundError:
-            raise css_exc.StructureNotFoundError(f'Structure file `{self.config.structure_filename}` is not found.')
+            raise StructureNotFoundError(f'Structure file `{self.config.structure_filename}` is not found.')
         parser = CifParser(self.config.structure_filename)
         self._parser_data = next(iter(parser._cif.data.values()))
         self.logger.info("Initial structure is read at %s.", self.config.structure_filename)
@@ -382,6 +384,7 @@ class CSS:
                 archive_path (str): path to archive containing css structures with single composition.
         """
         css_structures_metadata = {key: [] for key in fields_}
+        substitution_columns = fields_[6:] # NOTE: copies tuple from 6 index cause 6 previous columns are: "cif_data", "structure_filename", "composition", "space_group_no", "space_group_symbol", "weight"
         with zipfile.ZipFile(archive_path, "r") as archive:
             for structure_filename in archive.namelist():
                 with archive.open(structure_filename, "r") as file:
@@ -395,8 +398,8 @@ class CSS:
                     css_structures_metadata["space_group_no"].append(int(finder.get_space_group_number()))
                     css_structures_metadata["space_group_symbol"].append(finder.get_space_group_symbol())
                     css_structures_metadata["weight"].append(int(re.search(r"_w(\d+).cif", structure_filename).group(1)))
-                    for specie in substitute_with_species_:
-                        css_structures_metadata[f"{specie}_concentration"].append(specie_counter[specie] / len(structure))
+                    for indx, specie in enumerate(substitute_with_species_):
+                        css_structures_metadata[substitution_columns[indx]].append(specie_counter[specie] / len(structure))
         css_structures_metadata_df = pd.DataFrame.from_dict(css_structures_metadata)
         css_structures_metadata_path = os.path.join(css_structures_metadata_path_,
                                                     os.path.splitext(os.path.basename(archive_path))[0] + ".pkl.gz")
@@ -411,9 +414,10 @@ class CSS:
         """
         self.logger.info("Preparing to collect metadata of CSS structures ...")
         substitute_with_species = tuple({subst.substitute_with for subst in self.config.substitution})
+        fictive_species = tuple({subst.substitute_with for subst in self.config.substitution if subst.is_fictive})
         fields = ["cif_data", "structure_filename", "composition", "space_group_no", "space_group_symbol", "weight"]
         for specie in substitute_with_species:
-            fields.append(f"{specie}_concentration")
+            fields.append(f"{specie}_concentration" if specie not in fictive_species else f"{specie}_concentration (fictive)")
         fields = tuple(fields)
         os.makedirs(self._css_structures_metadata_path, exist_ok=True if self._rewrite_results else False)
         archive_paths = [os.path.join(self._css_structures_path, archive_filename)
@@ -435,9 +439,9 @@ class CSS:
 
     def __repr__(self):
         """
-            __repr__ method of the csslib.CSS class.
+            __repr__ method of the CSS class.
 
             Return:
                 str: information about config, stored in the class variable CSS.config.
         """
-        return f"csslib.CSS object containing the following config file:\n{self.config.__repr__()}"
+        return f"CSS object containing the following config file:\n{self.config.__repr__()}"

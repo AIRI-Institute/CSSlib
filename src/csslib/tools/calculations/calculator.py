@@ -86,7 +86,7 @@ class Calculator:
         if isinstance(data, str):
             self.__data = DataLoader(data, **dataloader_fields)
         self.__connections = dict()
-        self.__scheduler = Scheduler(cmd=self.__cmd, max_workers=self.__max_workers, use_local=use_local)
+        self.__scheduler = Scheduler(cmd=self.__cmd, max_workers=self.__max_workers, use_local=self.__use_local)
         self.__workers_distribution = dict()
         self.__workers = dict()
 
@@ -161,6 +161,13 @@ class Calculator:
             self.__password = [self.__password]
             if isinstance(self.__cmd, list):
                 self.__cmd = {self.__server_ip[0]: self.__cmd[0], 'local': self.__cmd[-1]}
+
+    def _prepare_dataset(self):
+        """
+            Prepares the dataset for calculation by adding 3 columns if they have not been added previously. They are: calculation_status, calculation_info and calculation_output. 
+        """
+        if not all(column in self.__data.get_df().columns for column in ['calculation_status', 'calculation_info', 'calculation_output']):
+            ...
 
     def run(self):
         """

@@ -12,7 +12,7 @@ import pickle
 from csslib.exceptions import DataLoaderError
 from joblib import Parallel, delayed
 from tqdm import tqdm
-from typing import Callable
+from typing import Any, Callable, Iterator
 
 
 class DataLoader:
@@ -205,3 +205,57 @@ class DataLoader:
                 pandas.DataFrame: df attribute with information about the css.
         """
         return self.__df
+    
+    def __getitem__(self, key: Any) -> pd.Series:
+        """
+            Getitem magic method of the DataLoader class.
+            
+            Args:
+                key (Any): key for the df pandas.DataFrame.
+            
+            Return:
+                pandas.Series: selected column of the df attribute.
+        """
+        return self.__df[key]
+    
+    def __setitem__(self, key: Any, value: Any):
+        """
+            Setitem magic method of the DataLoader class.
+            
+            Args:
+                key (Any): key for the df pandas.DataFrame object.
+                value (Any): value to be set in the df pandas.DataFrame object.
+        """
+        self.__df[key] = value
+    
+    def __iter__(self) -> Iterator:
+        """
+            Iter magic method for iteration over df pandas.DataFrame object. Uses pandas.DataFrame.itertuples method.
+            
+            Return:
+                Iterator: pandas named tuple object with index=True.
+        """
+        return self.__df.itertuples(index=True, name='CSSData')
+
+    def __getattr__(self, name: str) -> Any:
+        """
+            Getattr magic method of the DataLoader class. Redirects all unknown attributes to the df object.
+            
+            Args:
+                name (str): name of the attribute which should be found.
+                
+            Raise:
+                csslib.exceptions.DataLoaderError: if attribute is not found in the df attribute.
+        """
+        try:
+            return getattr(self.__df, name)
+        except AttributeError:
+            raise DataLoaderError(f'Attribute {name} is not found for the df protected attribute.')
+        
+    def __repr__(self):
+        """
+            Repr magic method of the DataLoader class. Outputs information from the df.describe() method. 
+        """
+        message = f'DataLoader object located at {hex(id(self))}. Stores the pandas.DataFrame object with the following statistics:\n'
+        message += str(self.__df.describe())
+        return message
