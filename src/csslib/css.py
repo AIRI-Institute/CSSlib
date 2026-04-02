@@ -49,7 +49,7 @@ class CSS:
             Initialization method of csslib.CSS class.
 
             Args:
-                config_filename (str): relative or absolute path to the .json config file. 
+                config_filename (str): relative or absolute path to the .json config file.
                 rewrite_results (bool, optional): results overwrite flag. Defaults to False.
 
             Raise:
@@ -85,7 +85,7 @@ class CSS:
         self._structure = None
         self._parser_data = None
         self._scale_factor = 0
-        self._substitution_labels_natoms_list = []    
+        self._substitution_labels_natoms_list = []
         self.logger = get_css_logger(self._result_path)
 
     def generate_css(self):
@@ -187,7 +187,7 @@ class CSS:
             else:
                 self._substitution_labels_natoms_list.append(labels_natoms)
         self.logger.info("Substitution parameters are evaluated successfully!")
-    
+
     def _create_and_save_substitution_template(self) -> None:
         """
             Creates and saves the template for subsequent substitution runs, i.e. for the css structures generation.
@@ -350,7 +350,7 @@ class CSS:
                         self.logger.error("%s Install it from the https://orex.github.io/.", error_message.rstrip())
                     else:
                         self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())
-                    sys.exit(1)
+                    sys.exit(1) # TODO: change this program behaviour
             pool.shutdown(wait=True, cancel_futures=False)
             self.logger.info("Checking out possibility of CSS structures creation is finished successfully!")
 

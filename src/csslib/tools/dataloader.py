@@ -31,13 +31,13 @@ class DataLoader:
                 transformation_function (Callable | None, optional): transformation function to be applied to the configurations set.
                 As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
                 Defaults to None.
-                save_loaded_data (bool, optional): if True stores loaded data in the save_loaded_data_filepath. 
+                save_loaded_data (bool, optional): if True stores loaded data in the save_loaded_data_filepath.
                 Uses only when path variable points on the directory. Otherwise, the flag is always changes to False. Defaults to True.
-                save_loaded_data_path (str, optional): path to the file where loaded data will be stored. Defaults to '<path>/selected.pkl.gz'. 
+                save_loaded_data_path (str, optional): path to the file where loaded data will be stored. Defaults to '<path>/selected.pkl.gz'.
                 copy_unloaded_data (bool, optional): if True copies unloaded data to the copy_unloaded_data_path. Useful when
-                configurations will be iteratively selected from the full css dataset. Uses only when path variable points on the directory. 
+                configurations will be iteratively selected from the full css dataset. Uses only when path variable points on the directory.
                 Otherwise, the flag is always changes to False. Defaults to True.
-                copy_unloaded_data_path (str, optional): path to the folder where unloaded data will be stored. Defaults to '<path>/css_unselected'. 
+                copy_unloaded_data_path (str, optional): path to the folder where unloaded data will be stored. Defaults to '<path>/css_unselected'.
 
             Raise:
                 csslib.exceptions.DataLoaderError: while results folder do not contain .pkl.gz files.
@@ -63,7 +63,7 @@ class DataLoader:
         self.copy_unloaded_data_path = os.path.join(os.path.dirname(path), copy_unloaded_data_path.split('/')[-1]) if copy_unloaded_data_path == "<path>/css_unselected" else copy_unloaded_data_path
 
         self.__df = self.__load()
-    
+
     @staticmethod
     def __parse_worker(file_path: str, transformation_function: Callable | None = None,
                        copy_unloaded_data_path: str | None = None) -> pd.DataFrame:
@@ -75,7 +75,7 @@ class DataLoader:
                 transformation_function (Callable | None, optional): transformation function to be applied to the configurations set.
                 As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
                 Defaults to None.
-                copy_unloaded_data_path (str, optional): path to the folder where unloaded data will be stored. Defaults to None. 
+                copy_unloaded_data_path (str, optional): path to the folder where unloaded data will be stored. Defaults to None.
 
             Return:
                 pandas.DataFrame: table with information about css structures.
@@ -109,14 +109,14 @@ class DataLoader:
             os.makedirs(self.copy_unloaded_data_path, exist_ok=True)
 
         if self.num_workers == 1 or len(self.__pkl_gz) == 1:
-            results = [self.__parse_worker(pkl, self.transformation_function, self.copy_unloaded_data_path if self.__copy_unloaded_data else None) 
+            results = [self.__parse_worker(pkl, self.transformation_function, self.copy_unloaded_data_path if self.__copy_unloaded_data else None)
                        for pkl in tqdm(self.__pkl_gz, desc="Collecting metadata of CSS structures", unit=" .pkl.gz", ncols=200)]
         else:
             results = Parallel(n_jobs=self.num_workers, backend="loky")(
                 delayed(self.__parse_worker)(pkl, self.transformation_function, self.copy_unloaded_data_path if self.__copy_unloaded_data else None)
                 for pkl in tqdm(self.__pkl_gz, desc="Collecting metadata of CSS structures", unit=" .pkl.gz", ncols=200)
             )
-        
+
         df = pd.concat(results, ignore_index=True).reset_index(drop=True) if results else pd.DataFrame()
         if self.__save_loaded_data:
             df.to_pickle(self.save_loaded_data_filepath)
@@ -139,12 +139,12 @@ class DataLoader:
         if self.__df is None:
             raise DataLoaderError('Data from .pkl.gz is not read yet.')
 
-        self.transformation_function = transformation_function        
+        self.transformation_function = transformation_function
         self.__df = self.transformation_function(self.__df)
-    
+
     def save_df(self, filepath: str):
         """
-            Saves dataframe in the .pkl.gz file. Useful when df attribute is changed by apply method and new 
+            Saves dataframe in the .pkl.gz file. Useful when df attribute is changed by apply method and new
             dataframe should be saved.
 
             Args:
@@ -152,7 +152,7 @@ class DataLoader:
         """
         self.__df.to_pickle(filepath)
 
-    def select_add(self, select_path: str | None = None, transformation_function: Callable | None = None, 
+    def select_add(self, select_path: str | None = None, transformation_function: Callable | None = None,
                    save_merged_df_to: str | None = None):
         """
             Additionaly selects and adds configurations to the df attribute. Can be used in the active learning procedure.
@@ -176,13 +176,13 @@ class DataLoader:
         if not self.__unselected_configuration_were_saved or select_path:
             self.copy_unloaded_data_path = select_path
         self.__pkl_gz = [os.path.join(self.copy_unloaded_data_path, archive) for archive in os.listdir(self.copy_unloaded_data_path) if archive.endswith('.pkl.gz')]
-        
+
         if transformation_function is not None:
             self.transformation_function = transformation_function
 
         self.__copy_unloaded_data = True
         self.__save_loaded_data = False
-        
+
         added_df = self.__load()
         self.__df = pd.concat([self.__df, added_df], ignore_index=True)
         self.save_df(save_merged_df_to if save_merged_df_to is not None else self.save_loaded_data_filepath)
