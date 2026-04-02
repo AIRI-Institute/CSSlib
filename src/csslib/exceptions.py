@@ -195,6 +195,8 @@ def catch_config_errors(e: ValidationError) -> str:
         match el['type']:
             case 'string_type':
                 message += f'  - Incorrect parameter type at position - {str(loc)}. String is required;\n'
+            case 'list_type':
+                message += f'  - Incorrect parameter type at position - {str(loc)}. List is required;\n'
             case 'int_parsing':
                 message += f'  - Incorrect parameter type at position - {str(loc)}. Integer is required;\n'
             case 'missing':

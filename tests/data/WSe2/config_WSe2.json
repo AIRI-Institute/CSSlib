@@ -3,34 +3,31 @@
   "structure_filename": "data/WSe2/WSe2.cif",
   "supercell": "2x2x1",
   "num_workers":  4,
+  "fictive_atoms": [ "U", "Np" ],
   "substitution": [
     {
       "specie_to_substitute": "W",
       "substitute_with": "Mo",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.3333333,
-      "is_fictive": false
+      "substitution_high_limit": 0.3333333
     },
     {
       "specie_to_substitute": "W",
       "substitute_with": "U",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.1666667,
-      "is_fictive": true
+      "substitution_high_limit": 0.1666667
     },
     {
       "specie_to_substitute": "Se",
       "substitute_with": "S",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.6666667,
-      "is_fictive": false
+      "substitution_high_limit": 0.6666667
     },
     {
       "specie_to_substitute": "Se",
       "substitute_with": "Np",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.3333333,
-      "is_fictive": true
+      "substitution_high_limit": 0.3333333
     }
   ]
 }

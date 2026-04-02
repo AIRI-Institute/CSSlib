@@ -85,6 +85,7 @@ class CSS:
         self._css_structures_metadata_path = os.path.join(self._result_path, self._CSS_STRUCTURES_METADATA_DIR)
         self._substitution_template_filename = f"substitution_template_{os.path.basename(self.config.structure_filename)}"
         self._structure = None
+        self._all_species = set()
         self._parser_data = None
         self._scale_factor = 0
         self._substitution_labels_natoms_list = []
@@ -120,6 +121,8 @@ class CSS:
             raise StructureNotFoundError(f'Structure file `{self.config.structure_filename}` is not found.')
         parser = CifParser(self.config.structure_filename)
         self._parser_data = next(iter(parser._cif.data.values()))
+        structure_species = (specie.name for specie in self._structure.species)
+        self._all_species = self._all_species | set(structure_species) | set(subst.substitute_with for subst in self.config.substitution) if self.config.substitution else self._all_species | set(structure_species)
         self.logger.info("Initial structure is read at %s.", self.config.structure_filename)
 
     def _evaluate_substitution_parameters(self) -> None:
@@ -357,20 +360,17 @@ class CSS:
             self.logger.info("Checking out possibility of CSS structures creation is finished successfully!")
 
     @staticmethod
-    def _init_collect_worker(fields: tuple, substitute_with_species: tuple,
-                             css_structures_metadata_path: str, result_path: str) -> None:
+    def _init_collect_worker(fields: tuple, css_structures_metadata_path: str, result_path: str) -> None:
         """
             Initializes collect workers.
 
             Args:
                 fields (tuple): names of dataframe columns where metadata collected.
-                substitute_with_species (tuple): species that were used as substitutes.
                 css_structures_metadata_path (str): path to archives with css structures.
                 result_path (str): path to the results' directory.
         """
-        global fields_, substitute_with_species_, css_structures_metadata_path_, collect_worker_logger_
+        global fields_, css_structures_metadata_path_, collect_worker_logger_
         fields_ = fields
-        substitute_with_species_ = substitute_with_species
         css_structures_metadata_path_ = css_structures_metadata_path
         logger = get_collect_worker_logger(result_path)
         collect_worker_logger_ = logger
@@ -384,7 +384,7 @@ class CSS:
                 archive_path (str): path to archive containing css structures with single composition.
         """
         css_structures_metadata = {key: [] for key in fields_}
-        substitution_columns = fields_[6:] # NOTE: copies tuple from 6 index cause 6 previous columns are: "cif_data", "structure_filename", "composition", "space_group_no", "space_group_symbol", "weight"
+        species_columns = fields_[6:] # NOTE: copies tuple from 6 index cause 6 previous columns are: "cif_data", "structure_filename", "composition", "space_group_no", "space_group_symbol", "weight"
         with zipfile.ZipFile(archive_path, "r") as archive:
             for structure_filename in archive.namelist():
                 with archive.open(structure_filename, "r") as file:
@@ -398,8 +398,9 @@ class CSS:
                     css_structures_metadata["space_group_no"].append(int(finder.get_space_group_number()))
                     css_structures_metadata["space_group_symbol"].append(finder.get_space_group_symbol())
                     css_structures_metadata["weight"].append(int(re.search(r"_w(\d+).cif", structure_filename).group(1)))
-                    for indx, specie in enumerate(substitute_with_species_):
-                        css_structures_metadata[substitution_columns[indx]].append(specie_counter[specie] / len(structure))
+                    for species_column in species_columns:
+                        specie = species_column.split('_')[0]
+                        css_structures_metadata[species_column].append(specie_counter[specie] / len(structure) if specie in specie_counter else 0.0)
         css_structures_metadata_df = pd.DataFrame.from_dict(css_structures_metadata)
         css_structures_metadata_path = os.path.join(css_structures_metadata_path_,
                                                     os.path.splitext(os.path.basename(archive_path))[0] + ".pkl.gz")
@@ -411,14 +412,20 @@ class CSS:
     def _collect_data(self) -> None:
         """
             Collects meta-information about all css structures and save it to pandas dataframes.
+
+            Raise:
+                csslib.exceptions.ValidationError: if _all_species attribute is empty.
         """
         self.logger.info("Preparing to collect metadata of CSS structures ...")
-        substitute_with_species = tuple({subst.substitute_with for subst in self.config.substitution})
-        fictive_species = tuple({subst.substitute_with for subst in self.config.substitution if subst.is_fictive})
         fields = ["cif_data", "structure_filename", "composition", "space_group_no", "space_group_symbol", "weight"]
-        for specie in substitute_with_species:
-            fields.append(f"{specie}_concentration" if specie not in fictive_species else f"{specie}_concentration (fictive)")
+        species = []
+        for specie in self._all_species:
+            species.append(f"{specie}_concentration (fictive)" if specie in self.config.fictive_atoms else f"{specie}_concentration")
+        if not species:
+            raise ValidationError('_all_species attribute is empty. Try to call _read_structure first!')
+        fields.extend(sorted(species))
         fields = tuple(fields)
+        
         os.makedirs(self._css_structures_metadata_path, exist_ok=True if self._rewrite_results else False)
         archive_paths = [os.path.join(self._css_structures_path, archive_filename)
                          for archive_filename in os.listdir(self._css_structures_path)]
@@ -429,8 +436,7 @@ class CSS:
               as pbar,
               ProcessPoolExecutor(max_workers=self.config.num_workers,
                                   initializer=self._init_collect_worker,
-                                  initargs=(fields, substitute_with_species,
-                                            self._css_structures_metadata_path, self._result_path))
+                                  initargs=(fields, self._css_structures_metadata_path, self._result_path))
               as pool):
             for archive_path in archive_paths:
                 future = pool.submit(self._collect_data_one_composition, archive_path)

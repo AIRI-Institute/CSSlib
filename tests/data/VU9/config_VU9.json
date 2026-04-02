@@ -3,27 +3,25 @@
   "structure_filename": "data/VU9/VU9.cif",
   "supercell": "3x3x3",
   "num_workers":  4,
+  "fictive_atoms": [ "U" ],
   "substitution": [
     {
       "specie_to_substitute": "V",
       "substitute_with": "Ti",
       "substitution_low_limit": 0.0038,
-      "substitution_high_limit": 0.0074,
-      "is_fictive": false
+      "substitution_high_limit": 0.0074
     },
     {
       "specie_to_substitute": "V",
       "substitute_with": "Cr",
       "substitution_low_limit": 0.0038,
-      "substitution_high_limit": 0.0074,
-      "is_fictive": false
+      "substitution_high_limit": 0.0074
     },
     {
       "specie_to_substitute": "U",
       "substitute_with": "H",
       "substitution_low_limit": 0.0075,
-      "substitution_high_limit": 0.0100,
-      "is_fictive": false
+      "substitution_high_limit": 0.0100
     }
   ]
 }

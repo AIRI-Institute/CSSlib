@@ -20,7 +20,6 @@ class Substitution(BaseModel):
             substitute_with (str): the chemical element that will replace the original chemical element.
             substitution_low_limit (float): lower boundary of the substitution. Restrictions: >= 0 and < 1. Example: 0.05.
             substitution_high_limit (float): higher boundary of the substitution. Restrictions: > 0, <= 1 and > substitution_low_limit. Example: 0.5.
-            is_fictive (bool): if True, the atom will be marked as fictive.
         
         Fields that must be empty:
             substitution_low_limit_natoms (int): the minimum number of atoms that must be replaced.
@@ -34,7 +33,6 @@ class Substitution(BaseModel):
     substitute_with: str
     substitution_low_limit: float
     substitution_high_limit: float
-    is_fictive: bool
     substitution_low_limit_natoms: int | None = None
     substitution_high_limit_natoms: int | None = None
     indices_to_substitute: list[int] | None = None
@@ -46,8 +44,7 @@ class Substitution(BaseModel):
         message += f'      specie_to_substitute="{self.specie_to_substitute}",\n'
         message += f'      substitute_with="{self.substitute_with}",\n'
         message += f'      substitution_low_limit={self.substitution_low_limit},\n'
-        message += f'      substitution_high_limit={self.substitution_high_limit},\n'
-        message += f'      is_fictive={self.is_fictive}\n    )'
+        message += f'      substitution_high_limit={self.substitution_high_limit},\n    )'
         return message
       
     def __str__(self):
@@ -63,6 +60,7 @@ class Config(BaseModel):
             structure_filename (str): a full or relative path to the .cif initial structure file.
             supercell (str, optional): system replication numbers in the following format: "2x1x1", "2x2x1", ... Defaults to "1x1x1".
             num_workers (int, optional): the number of parallel processes. Defaults to 1.
+            fictive_atoms (list): list with fictive atom names. Must be filled. If there are no one fictive atom type in the system fictive_atoms should be [].  
             substitution (list[Substitutions], optional): list of required substitutions for the system.
     """
     model_config = ConfigDict(extra="forbid")
@@ -70,6 +68,7 @@ class Config(BaseModel):
     structure_filename: str
     supercell: str = "1x1x1"
     num_workers: int = 1
+    fictive_atoms: list
     substitution: list[Substitution] | None = None
     
     @classmethod
@@ -84,6 +83,7 @@ class Config(BaseModel):
         message += f'  structure_filename="{self.structure_filename}",\n'
         message += f'  supercell="{self.supercell}",\n'
         message += f'  num_workers={self.num_workers},\n'
+        message += f'  fictive_atoms={self.fictive_atoms},\n'
         message += f'  substitution=['
         if self.substitution is not None:
             for indx, subst in enumerate(self.substitution):
@@ -108,12 +108,12 @@ def get_available_config_fields():
     message += '  - "structure_filename" - full or relative path to the .cif initial structure file (mandatory)\n'
     message += '  - "supercell" - system replication numbers in the following format: "2x1x1", "2x2x1", ... (optional, default value - "1x1x1")\n'
     message += '  - "num_workers" - number of parallel processes (optional, default value - 1)\n'
+    message += '  - "fictive_atoms" - list with fictive atom names. Must be filled. If there are no one fictive atom type in the system fictive_atoms should be [] (mandatory)\n'
     message += '  - "substitution" - list of required substitutions for the system (optional). The field has the following subfields:\n'
     message += '    - "specie_to_substitute" - string with a chemical element which should be replaced (mandatory)\n'
     message += '    - "substitute_with" - string with with a chemical element that will replace the original chemical element (mandatory)\n'
     message += '    - "substitution_low_limit" - float value containing lower boundary of the substitution (mandatory). Example: 0.05\n'
     message += '    - "substitution_high_limit" - float value containing higher boundary of the substitution (mandatory). Example: 0.5\n'
-    message += '    - "is_fictive" - if True, the substitution atom will be marked as fictive (mandatory).\n'
     message += '    Internal parameters:\n'
     message += '    - "substitution_low_limit_natoms"\n'
     message += '    - "substitution_high_limit_natoms"\n'
@@ -134,20 +134,19 @@ def get_example_config():
   "structure_filename": "path-to-cif-file",
   "supercell": "1x1x1",
   "num_workers":  1,
+  "fictive_atoms": ['X', 'N'],
   "substitution": [
     {
       "specie_to_substitute": "X",
       "substitute_with": "Y",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.05,
-      "is_fictive": false
+      "substitution_high_limit": 0.05
     },
     {
       "specie_to_substitute": "E",
       "substitute_with": "N",
       "substitution_low_limit": 0.0,
-      "substitution_high_limit": 0.06,
-      "is_fictive": true
+      "substitution_high_limit": 0.06
     }
   ]
 }'''

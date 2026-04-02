@@ -4,16 +4,27 @@ __all__ = [
     "Calculator"
 ]
 
-import os
+
 from csslib.exceptions import CalculatorError
 from csslib.tools.dataloader import DataLoader
 from csslib.tools.calculations.inputs import InputSet
 from csslib.tools.calculations.remote import RemoteConnection, ConnectionStatus
 from csslib.tools.calculations.scheduler import Scheduler
 from csslib.tools.calculations.worker import Worker, RemoteWorker
+from dataclasses import dataclass
 from enum import Enum
 from pymatgen.io.vasp import Incar, Poscar, Kpoints, Potcar
-from typing import Callable, Any
+from typing import Any
+
+
+@dataclass
+class CalculationInfo:
+    """
+        Class for calculation info storage. Useful in cases, when session has been interrupted and synchronization or recovery is required.
+        
+        Attributes:
+            server_ip (str, optional): adress of the remote server. 'local' is calculation on the local machine
+    """
 
 
 class CalculationStatus(Enum):
@@ -167,7 +178,9 @@ class Calculator:
             Prepares the dataset for calculation by adding 3 columns if they have not been added previously. They are: calculation_status, calculation_info and calculation_output. 
         """
         if not all(column in self.__data.get_df().columns for column in ['calculation_status', 'calculation_info', 'calculation_output']):
-            ...
+            self.__data['calculation_status'] = CalculationStatus.PENDING
+            self.__data['calculation_info'] = ...
+            self.__data['calculation_output'] = None
 
     def run(self):
         """

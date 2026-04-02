@@ -3,6 +3,7 @@
   "structure_filename": "name",
   "cell": "2x1x1",
   "num_workers": "many",
+  "fictive_atoms": "something",
   "substitution": [
     {
       "specie_to_substitute": "Cs",
