@@ -59,8 +59,9 @@ class DataLoader:
 
         self.num_workers = num_workers
         self.transformation_function = transformation_function
-        self.save_loaded_data_filepath = os.path.join(os.path.dirname(path), save_loaded_data_filepath.split('/')[-1]) if save_loaded_data_filepath == "<path>/selected.pkl.gz" else save_loaded_data_filepath
-        self.copy_unloaded_data_path = os.path.join(os.path.dirname(path), copy_unloaded_data_path.split('/')[-1]) if copy_unloaded_data_path == "<path>/css_unselected" else copy_unloaded_data_path
+        self.base_path = os.path.dirname(path)
+        self.save_loaded_data_filepath = os.path.join(self.base_path, save_loaded_data_filepath.split('/')[-1]) if save_loaded_data_filepath == "<path>/selected.pkl.gz" else save_loaded_data_filepath
+        self.copy_unloaded_data_path = os.path.join(self.base_path, copy_unloaded_data_path.split('/')[-1]) if copy_unloaded_data_path == "<path>/css_unselected" else copy_unloaded_data_path
 
         self.__df = self.__load()
 
@@ -259,3 +260,18 @@ class DataLoader:
         message = f'DataLoader object located at {hex(id(self))}. Stores the pandas.DataFrame object with the following statistics:\n'
         message += str(self.__df.describe())
         return message
+
+    def __len__(self):
+        """
+            Len magic method of the DataLoader class. Outputs information about length og the df. 
+        """
+        return len(self.__df)
+    
+    def __contains__(self, item) -> bool:
+        """
+            Contains magic method of the DataLoader class.
+            
+            Return:
+                bool: True if column found in the df, else False.
+        """
+        return item in self.__df

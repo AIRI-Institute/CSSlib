@@ -351,7 +351,7 @@ class CSS:
             for future in as_completed(futures):
                 if (error_message := future.result()) is not None:
                     pool.shutdown(wait=True, cancel_futures=True)
-                    if 'supercell: command not found' in error_message:
+                    if 'not found' in error_message:
                         self.logger.error("%s Install it from the https://orex.github.io/.", error_message.rstrip())
                     else:
                         self.logger.error("%s Change config-file to simplify CSS and try again.", error_message.rstrip())

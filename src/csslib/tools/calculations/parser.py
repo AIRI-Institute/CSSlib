@@ -1,66 +1,75 @@
-"""Module with functions for parsing VASP output xml files."""
+"""
+    Module with predefined functions for parsing calculation results.
+    
+    All functions in this module obtains workdir as an input parameter and parses all required data from it.
+"""
+
 
 __all__ = []
 
+
 import os
-import pickle
-import re
-import tqdm
 from pymatgen.io.vasp import Vasprun
 
 
-def getStructuresAsList(workdir):
-    '''
-        Input:
-            - workdir - directory, where vasp xml files are located
-        Description:
-            Parse xml files in work directory, reads .pkl file if it exists or reads all xml files and writes data to .pkl: 
-            extractes structure formula, natoms, atomic_symbols, atomic_numbers, nelements, initial_cell (optional), 
-            initial_structure, final_cell (optional), final_structure, last_step_pressure, last_step_forces and energy.
-        ```
-        Return - list of data with information about structures
-        ```
-    '''
-    xml_list = [xml for xml in os.listdir(workdir) if xml.endswith('xml')]
-    pkl_file_name = re.sub('3res_structures/', '3res_list.pkl', workdir) # replaces 3res_structures/ in workdir path into 3res_list.pkl
-    print('\ngetStructuresAsList out:', pkl_file_name)
-    if os.path.exists(pkl_file_name) :
-        with open(pkl_file_name, 'rb') as f:
-            result = pickle.load(f)
-        if len(xml_list) == len(result) :
-            print(f'result file for {workdir} has been read from pkl')
-            return result
-    print(f'result file for {workdir} is being updated')
-    result =[]
-    for xml_file in tqdm(xml_list):
-        tag = re.sub('vasprun_', '', re.sub('.xml', '', xml_file))
-        #print(tag)
-        try:
-            run = Vasprun(f'{workdir}/{xml_file}', parse_potcar_file=False)
-        except:
-            print(f'vasprun.xml is not OK for {tag}')
+def _find_existing_file(workdir: str, candidate_names: list[str]) -> str | None:
+    """
+        Finds the specified name in the given workdir.
+        
+        Args:
+            workdir (str): name of the working directory.
+            candidate_names (list[str]): list of files that should be found. Function returns the first found candidate.
+            
+        Return:
+            str | None: path of the candidate file. If file is not found returns None.
+    """
 
-        if not run.converged:
-            print(f'vasprun.xml IS NOT CONVERGED for {tag}')
+    for candidate_name in candidate_names:
+        candidate_path = os.path.join(workdir, candidate_name)
+        if os.path.exists(candidate_path):
+            return candidate_path
+    for root, _, files in os.walk(workdir):
+        for candidate_name in candidate_names:
+            if candidate_name in files:
+                return os.path.join(root, candidate_name)
+    return None
 
-        initial_structure = run.initial_structure
-        final_structure = run.final_structure
-        #initial_cell = initial_structure.lattice.matrix
-        #final_cell = final_structure.lattice.matrix
-        #initial_structure = np.array([x.coords for x in initial_structure])
-        #final_structure = np.array([x.coords for x in final_structure])
-        last_step_forces = np.array(run.ionic_steps[-1]['forces'])
-        last_step_pressure = np.trace(run.ionic_steps[-1]['stress']) / 3
-        energy = run.final_energy
-        atomic_symbols = run.atomic_symbols
-        atomic_numbers = np.array(list(map(lambda x: Element(x).number, atomic_symbols)))
-        formula = OrderedDict(sorted(Counter(atomic_symbols).items()))
-        natoms = len(atomic_symbols)
-        nelements = len(formula)
-        result += [[tag, formula, natoms, atomic_symbols, atomic_numbers, nelements, 
-                    initial_structure, #initial_cell, initial_structure, 
-                    final_structure, #final_cell, final_structure, 
-                    last_step_pressure, last_step_forces, energy]]
-    with open(pkl_file_name, 'wb') as f:
-        pickle.dump(result, f)
-    return result
+
+def default_vasp_parser(workdir: str, **vasp_kwargs):
+    """
+        Default vasp parser function. Parses file into the pymatgen.io.vasp.Vasprun object and ignores potcar file part in the output file.
+        
+        Args:
+            workdir (str): name of the working directory.
+            
+        Kwargs
+            vasp_kwargs (dict): kwargs to be passed to the pymatgen.io.vasp.Vasprun function.
+    """
+
+    vasprun_path = _find_existing_file(workdir, ["vasprun.xml"])
+    if vasprun_path is None:
+        raise FileNotFoundError(f"vasprun.xml was not found in {workdir}")
+    return Vasprun(vasprun_path, parse_potcar_file=False, **vasp_kwargs)
+
+
+def default_espresso_parser(workdir: str, **pwxml_kwargs):
+    """
+        Default espresso parser function. Parses file into pymatgen.io.espresso.outputs.PWxml object.
+        
+        Args:
+            workdir (str): name of the working directory.
+            
+        Kwargs
+            pwxml_kwargs (dict): kwargs to be passed to the pymatgen.io.espresso.outputs.PWxml function.
+    """
+    try:
+        from pymatgen.io.espresso.outputs import PWxml # TODO: try to implement pymatgen.io.pwscf.PWoutput
+        xml_path = _find_existing_file(workdir, ["pwscf.xml", "data-file-schema.xml"])
+        if xml_path is None:
+            raise FileNotFoundError(f"Quantum Espresso XML output was not found in {workdir}")
+        return PWxml(xml_path, **pwxml_kwargs)
+    except ImportError as exc:
+        message = "Full Quantum Espresso parsing requires the pymatgen-io-espresso package. "
+        message += "Install it with: reinstall CSSlib as pip install csslib[espresso] or "
+        message += "install only extention as pip install git+https://github.com/Griffin-Group/pymatgen-io-espresso"
+        raise ImportError(message) from exc
