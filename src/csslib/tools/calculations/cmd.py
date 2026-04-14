@@ -42,7 +42,7 @@ class MPI:
     error: str = ".csslib.stderr"
     
     def __post_init__(self):
-        if self.prefix not in self.__SUPPORTING_CMD_PREFIXES_MPI:
+        if self.prefix not in self.__SUPPORTING_PREFIXES_MPI:
             raise ConfigurationError(f"prefix attribute should be chosen from the supporting prefixes. They are: {str(self.__SUPPORTING_PREFIXES_MPI)}")
     
         if self.binary is None:
