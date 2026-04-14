@@ -52,7 +52,7 @@ def default_vasp_parser(workdir: str, **vasp_kwargs):
     return Vasprun(vasprun_path, parse_potcar_file=False, **vasp_kwargs)
 
 
-def default_espresso_parser(workdir: str, **pwxml_kwargs):
+def default_espresso_parser(workdir: str, pwxml_kwargs: dict):
     """
         Default espresso parser function. Parses file into pymatgen.io.espresso.outputs.PWxml object.
         

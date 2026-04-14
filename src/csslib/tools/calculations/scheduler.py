@@ -8,40 +8,24 @@ __all__ = []
 
 import getpass
 import os
-import shlex
 import subprocess
 
 from csslib.exceptions import RemoteConnectionError, SchedulerError
+from csslib.tools.calculations.cmd import MPI, SLURM
 
 
 class Scheduler:
     """Class which plans how to distribute resources between remote machines. Only for internal use in the Calculator class."""
 
-    SUPPORTING_CMD_PREFIXES_MPI = [
-        "mpi",
-        "mpirun",
-        "mpirun.mpich",
-        "mpirun.openmpi",
-        "mpiexec",
-        "mpiexec.hydra",
-        "mpiexec.mpich",
-        "mpiexec.openmpi",
-    ]
-    SUPPORTING_CMD_PREFIXES_SLURM = ["srun", "sbatch"]
-    PARALLEL_FLAGS_MPI = ["-c", "--c", "-n", "--n", "-np", "--np"]
-    PARALLEL_FLAGS_SLURM_NTASKS = ["-n", "--ntasks"]
-    PARALLEL_FLAGS_SLURM_CPU_PER_TASK = ["-c", "--cpus-per-task"]
-    SLURM_PARTITION_FLAGS = ["-p", "--partition"]
-    SLURM_NODE_FLAGS = ["-N", "--nodes"]
     SLURM_ACCOUNTING_NONE_MAX_SUBMIT = 9999
     SLURM_UNAVAILABLE_NODE_STATES = ("down", "drain", "drng", "fail", "maint", "resv")
 
-    def __init__(self, cmd: str | dict, structures_number: int, max_workers: int | dict | None = None, use_local: bool = False):
+    def __init__(self, cmd: MPI | SLURM | dict, structures_number: int, max_workers: int | dict | None = None, use_local: bool = False):
         """
             Initialization method for the Scheduler class.
 
             Args:
-                cmd (str | dict): cmd command or commands which will be parsed by Scheduler for the resources distribution.
+                cmd (MPI | SLURM | dict): cmd command object/objects which will be parsed by Scheduler for the resources distribution.
                 structures_number (int): number of structures to calculate.
                 max_workers (int | dict | None): maximal number of workers on the local machine or server/servers. If None then max_workers
                 will be set to structures_number.
@@ -60,28 +44,35 @@ class Scheduler:
         self.__parse_cmd()
 
     @staticmethod
-    def __split_cmd(cmd: str) -> list[str]:
-        return shlex.split(cmd)
-
-    @staticmethod
-    def __get_option_value(tokens: list[str], flags: list[str], default: int | str | None = None) -> int | str | None:
-        for indx, token in enumerate(tokens):
-            for flag in flags:
-                if token == flag:
-                    if indx + 1 < len(tokens):
-                        return tokens[indx + 1]
-                elif token.startswith(f"{flag}="):
-                    return token.split("=", maxsplit=1)[1]
-                elif len(flag) == 2 and token.startswith(flag) and token != flag:
-                    return token[len(flag):]
-        return default
-
-    @staticmethod
     def __run_local(command: str) -> tuple[str, str, int]:
+        """
+            Executes a shell command on the local machine and returns its outputs.
+
+            Args:
+                command (str): shell command that should be executed on the local machine.
+
+            Return:
+                tuple[str, str, int]: stdout, stderr and return code of the finished command.
+        """
+        
         result = subprocess.run(command, capture_output=True, text=True, shell=True)
         return result.stdout.strip(), result.stderr.strip(), result.returncode
 
     def __run_remote(self, server: str, command: str) -> tuple[str, str, int]:
+        """
+            Executes a shell command on the selected remote server through SSH.
+
+            Args:
+                server (str): remote server address or alias.
+                command (str): shell command that should be executed on the remote machine.
+
+            Raise:
+                RemoteConnectionError: if the SSH layer fails because the host is unknown or the connection is broken.
+
+            Return:
+                tuple[str, str, int]: stdout, stderr and return code of the finished remote command.
+        """
+        
         ssh = self.__connections[server]()["SSH"]
         try:
             _, stdout, stderr = ssh.exec_command(command)
@@ -94,59 +85,45 @@ class Scheduler:
         return stdout_text, stderr_text, stdout.channel.recv_exit_status()
 
     def __run_command(self, server: str, command: str) -> tuple[str, str, int]:
+        """
+            Executes a shell command on either the local machine or a remote server.
+
+            Args:
+                server (str): server name on which the command should be executed.
+                command (str): shell command that should be executed.
+
+            Return:
+                tuple[str, str, int]: stdout, stderr and return code of the finished command.
+        """
+        
         if server == "local":
             return self.__run_local(command)
         return self.__run_remote(server, command)
 
     def __get_cmd(self, server: str) -> str:
-        return self.__cmd if isinstance(self.__cmd, str) else self.__cmd[server]
-
-    @staticmethod
-    def __get_prefix(tokens: list[str]) -> str:
-        if not tokens:
-            raise SchedulerError("Cmd must not be empty.")
-        return tokens[0][1:] if tokens[0].startswith("#") else tokens[0]
-
-    def __verify_prefix(self, prefix: str):
         """
-            Verifies the first element of the splitted cmd and raises an exception if this prefix is not in the Scheduler.SUPPORTING_CMD_PREFIXES.
+            Returns the launch command associated with the selected server.
 
             Args:
-                prefix (str): first element of the splitted cmd string.
-
-            Raise:
-                csslib.exceptions.SchedulerError: if prefix not in the SUPPORTING_CMD_PREFIXES attribute.
-        """
-        if prefix not in Scheduler.SUPPORTING_CMD_PREFIXES_MPI and prefix not in Scheduler.SUPPORTING_CMD_PREFIXES_SLURM:
-            message = "Cmd prefix is not in the list of supporting cmd prefixes. "
-            message += f"Supporting cmd prefixes are: {Scheduler.SUPPORTING_CMD_PREFIXES_MPI} and {Scheduler.SUPPORTING_CMD_PREFIXES_SLURM}. "
-            message += "If serial calculation is required use '#' symbol at the start of the cmd."
-            raise SchedulerError(message)
-
-    def __analyse_tokens(self, tokens: list[str]) -> int:
-        """
-            Analyses the given list of tokens and returns the number of cores per server.
+                server (str): server name for which the original launch command should be returned.
 
             Return:
-                int: cores per server.
+                str: command string associated with the requested server.
         """
-        if not tokens:
-            raise SchedulerError("Cmd must not be empty.")
-        if tokens[0].startswith("#"):
-            return 1
-
-        prefix = self.__get_prefix(tokens)
-        self.__verify_prefix(prefix)
-        if prefix in Scheduler.SUPPORTING_CMD_PREFIXES_MPI:
-            cores = self.__get_option_value(tokens, Scheduler.PARALLEL_FLAGS_MPI)
-            return int(cores) if cores is not None else -1
-
-        ntasks = int(self.__get_option_value(tokens, Scheduler.PARALLEL_FLAGS_SLURM_NTASKS, 1))
-        cpu_per_task = int(self.__get_option_value(tokens, Scheduler.PARALLEL_FLAGS_SLURM_CPU_PER_TASK, 1))
-        return ntasks * cpu_per_task
+        
+        return self.__cmd if not isinstance(self.__cmd, dict) else self.__cmd[server]
 
     @staticmethod
     def __parse_slurm_limits(stdout: str) -> dict:
+        """
+            Parses sacctmgr output with per-partition SLURM limits.
+
+            Args:
+                stdout (str): raw sacctmgr output containing per-partition SLURM limits.
+
+            Return:
+                dict: parsed limits table indexed by partition name.
+        """
         table = {}
         for line in stdout.splitlines():
             line = line.strip()
@@ -169,13 +146,25 @@ class Scheduler:
             Raise:
                 csslib.exceptions.SchedulerError: if use_local=True and cmd is dict, but the 'local' server name does not exist.
         """
-        if isinstance(self.__cmd, str):
-            self.__cores = self.__analyse_tokens(self.__split_cmd(self.__cmd))
+        if not isinstance(self.__cmd, dict):
+            if isinstance(self.__cmd, MPI):
+                self.__cores = self.__cmd.cores_number if self.__cmd.cores_number is not None else None
+            else:
+                if self.__cmd.cpu_per_task is None and self.__cmd.ntasks is None:
+                    self.__cores = None
+                else:
+                    self.__cores = self.__cmd.cpu_per_task * self.__cmd.ntasks 
             return
 
         self.__cores = {}
         for server, command in self.__cmd.items():
-            self.__cores[server] = self.__analyse_tokens(self.__split_cmd(command))
+            if isinstance(command, MPI):
+                self.__cores[server] = command.cores_number if command.cores_number is not None else None
+            else:
+                if command.cpu_per_task is None and command.ntasks is None:
+                    self.__cores[server] = None
+                else:
+                    self.__cores[server] = command.cpu_per_task * command.ntasks
         if self.__use_local and "local" not in self.__cores:
             raise SchedulerError("If use_local is True and cmd is a dictionary, then 'local' key in the cmd must exist.")
 
@@ -191,10 +180,7 @@ class Scheduler:
         """
         self.__connections = connections or {}
         for server, connection in self.__connections.items():
-            has_slurm = connection.has_slurm
-            cmd_for_server = self.__get_cmd(server)
-            cmd_is_slurm = self.__get_prefix(self.__split_cmd(cmd_for_server)) in Scheduler.SUPPORTING_CMD_PREFIXES_SLURM
-            if has_slurm != cmd_is_slurm:
+            if connection.has_slurm != isinstance(self.__get_cmd(server), SLURM):
                 message = "Mismatch between the cmd and connection is found. "
                 message += "If connection has the SLURM system you must use the cmd for SLURM system. "
                 message += "If connection has the MPI system you must use the cmd for MPI system."
@@ -207,11 +193,8 @@ class Scheduler:
             Args:
                 server (str): address of the server which should be checked.
         """
-        cores = self.__cores[server] if isinstance(self.__cores, dict) else self.__cores
-        if cores == 1:
-            return
-
-        command = self.__get_prefix(self.__split_cmd(self.__get_cmd(server)))
+        
+        command = self.__get_cmd(server).prefix
         if server == "local":
             probe_command = f"where.exe {command}" if os.name == "nt" else f"command -v {command}"
             _, _, returncode = self.__run_local(probe_command)
@@ -221,20 +204,16 @@ class Scheduler:
             place = "local" if server == "local" else f"server - {server}"
             raise SchedulerError(f"Command {command} is not found on the {place}. Please double check your cmd!")
 
-    def __get_slurm_partition(self, server: str) -> str:
-        cmd = self.__get_cmd(server)
-        tokens = self.__split_cmd(cmd)
-        partition = self.__get_option_value(tokens, Scheduler.SLURM_PARTITION_FLAGS)
-        if partition is None:
-            raise SchedulerError("For SLURM systems partition flag is mandatory. Please rewrite your sbatch or srun command with -p or --partition flags!")
-        return str(partition)
-
-    def __get_slurm_nodes(self, server: str) -> int:
-        tokens = self.__split_cmd(self.__get_cmd(server))
-        nodes_number = self.__get_option_value(tokens, Scheduler.SLURM_NODE_FLAGS, 1)
-        return int(nodes_number)
-
     def __get_slurm_limits(self, server: str) -> tuple[dict, bool]:
+        """
+            Queries SLURM accounting limits and detects accounting_storage/none mode.
+
+            Args:
+                server (str): server name for which SLURM accounting limits should be requested.
+
+            Return:
+                tuple[dict, bool]: parsed SLURM limits table and a flag showing whether accounting_storage/none mode was detected.
+        """
         command = "sacctmgr show user -s -P -n format=Partition,MaxNodes,MaxCPUs,MaxSubmit"
         stdout, stderr, returncode = self.__run_command(server, command)
         accounting_storage_none = "accounting_storage/none" in stdout or "accounting_storage/none" in stderr
@@ -245,6 +224,20 @@ class Scheduler:
         return self.__parse_slurm_limits(stdout), False
 
     def __get_slurm_partition_resources(self, server: str, partition: str) -> tuple[int | None, int | None]:
+        """
+            Queries current CPU and node availability for the selected SLURM partition.
+
+            Args:
+                server (str): server name for which partition resources should be queried.
+                partition (str): SLURM partition name.
+
+            Raise:
+                SchedulerError: if the requested partition cannot be queried on the target server.
+
+            Return:
+                tuple[int | None, int | None]: number of idle CPUs and number of currently available nodes for the partition.
+        """
+        
         cpu_stdout, cpu_stderr, cpu_returncode = self.__run_command(server, f'sinfo -h -p {partition} -o "%C"')
         if cpu_returncode != 0 or cpu_stderr:
             raise SchedulerError(f"Partition {partition} from the cmd is not found on the remote/local server.")
@@ -274,19 +267,40 @@ class Scheduler:
         return (idle_cpus if has_cpu_data else None), available_nodes
 
     def __get_username(self, server: str) -> str:
+        """
+            Resolves the username under which scheduler queries are executed on the target resource.
+
+            Args:
+                server (str): server name for which the current username should be resolved.
+
+            Return:
+                str: username under which scheduling commands are executed on the target resource.
+        """
+        
         if server == "local":
             return getpass.getuser()
         stdout, _, _ = self.__run_remote(server, "whoami")
         return stdout.strip()
 
     def __get_active_slurm_jobs(self, server: str, partition: str) -> int:
+        """
+            Counts the current user's active jobs in the selected SLURM partition.
+
+            Args:
+                server (str): server name where active jobs should be counted.
+                partition (str): SLURM partition name that should be inspected.
+
+            Return:
+                int: number of current user jobs visible in the selected partition.
+        """
+        
         username = self.__get_username(server)
         stdout, _, returncode = self.__run_command(server, f"squeue -h -u {username} -p {partition} -o %i")
         if returncode != 0 or not stdout:
             return 0
         return len([line for line in stdout.splitlines() if line.strip()])
 
-    def __check_slurm(self, server: str) -> int:
+    def __check_slurm(self, server: str) -> int: #NOTE: check from here
         """
             Checks SLURM system limits and estimates the number of jobs that can be started now.
 
@@ -296,10 +310,11 @@ class Scheduler:
             Return:
                 int: currently available worker count for the target SLURM partition.
         """
-        partition = self.__get_slurm_partition(server)
-        nodes_number = self.__get_slurm_nodes(server)
+        partition = self.__get_cmd(server).partition
+        nodes_number = self.__get_cmd(server).nodes
         job_cores = self.__cores[server] if isinstance(self.__cores, dict) else self.__cores
-        job_cores = 1 if job_cores in (-1, None) else job_cores
+        
+        job_cores = 1 if job_cores is None else job_cores # NOTE: if SLURM.ntasks is None and SLURM.cpus_per_task is None than program behaviour can be incorrect.
 
         limits_table, accounting_storage_none = self.__get_slurm_limits(server)
         partition_limits = limits_table.get(partition, {})
@@ -365,7 +380,7 @@ class Scheduler:
                         break
         return remain_workers_to_remove, workers
 
-    def __reduce_workers_number(self, limit: int):
+    def __reduce_workers_number(self, available_resources: dict, limit: int):
         """
             Reduces number of workers if the evaluated sum of workers exceeds the requested limit.
             Makes priority for servers where the cmd command contains maximal number of cores.
@@ -384,8 +399,8 @@ class Scheduler:
 
         while remain_workers_to_remove and self.__workers:
             active_servers = [server for server in self.__workers if self.__workers[server] > 0]
-            non_negative_cores = [self.__cores[server] for server in active_servers if self.__cores[server] != -1]
-            min_cores = min(non_negative_cores) if non_negative_cores else -1
+            cores = [self.__cores[server] if self.__cores[server] is not None else available_resources[server] for server in active_servers]
+            min_cores = min(cores)
             workers_to_reduce = {server: value for server, value in self.__workers.items() if self.__cores[server] == min_cores}
             remain_workers_to_remove, reduced = self.__uniform_reduce(workers_to_reduce, remain_workers_to_remove)
             for server, value in reduced.items():
@@ -395,6 +410,12 @@ class Scheduler:
                     self.__workers.pop(server)
 
     def __limit_workers_by_resources(self, available_resources: dict):
+        """
+            Converts raw available resources into the maximal number of workers per server.
+
+            Args:
+                available_resources (dict): mapping from server names to available CPU or worker resources.
+        """
         self.__workers = {}
         for server, resources in available_resources.items():
             server_has_slurm = (server == "local" and self.__local_has_slurm) or (server != "local" and self.__connections[server].has_slurm)
@@ -402,7 +423,7 @@ class Scheduler:
                 workers = max(resources, 0)
             else:
                 cores = self.__cores[server] if isinstance(self.__cores, dict) else self.__cores
-                if cores == -1:
+                if cores is None:
                     workers = 1 if resources > 0 else 0
                 else:
                     workers = max(resources // max(cores, 1), 0)
@@ -416,7 +437,7 @@ class Scheduler:
         hard_limit = self.__structures_number
         if isinstance(self.__max_workers, int):
             hard_limit = min(hard_limit, self.__max_workers)
-        self.__reduce_workers_number(hard_limit)
+        self.__reduce_workers_number(available_resources, hard_limit)
 
     def distribute_workers(self):
         """
@@ -433,7 +454,7 @@ class Scheduler:
             stdout, stderr, returncode = self.__run_local("squeue --version")
             self.__local_has_slurm = returncode == 0 and "not found" not in stderr.lower() and "not recognized" not in stderr.lower()
             cmd_for_local = self.__get_cmd("local") if isinstance(self.__cmd, dict) else self.__cmd
-            cmd_is_slurm = self.__get_prefix(self.__split_cmd(cmd_for_local)) in Scheduler.SUPPORTING_CMD_PREFIXES_SLURM
+            cmd_is_slurm = isinstance(cmd_for_local, SLURM)
             if self.__local_has_slurm != cmd_is_slurm:
                 message = "Mismatch between the cmd and connection is found. "
                 message += "If connection has the SLURM system you must use the cmd for SLURM system. "

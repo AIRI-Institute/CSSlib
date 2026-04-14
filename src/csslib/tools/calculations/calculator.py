@@ -4,105 +4,27 @@ __all__ = [
     "Calculator",
     "VaspCalculator",
     "EspressoCalculator",
-    "make_espresso_pwxml_parser",
-    "EspressoRunFallback",
 ]
 
 
 import copy
 import os
 import re
-import shlex
 import threading
 import time
-import warnings
-import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass, field
-from enum import Enum
+from functools import partial
 from typing import Any, Callable
 
 from csslib.exceptions import CalculatorError
+from csslib.tools.calculations.cmd import MPI, SLURM
 from csslib.tools.calculations.inputs import EspressoInputs, InputSet, VaspInputs
+from csslib.tools.calculations.parser import default_espresso_parser, default_vasp_parser
 from csslib.tools.calculations.remote import ConnectionStatus, RemoteConnection
 from csslib.tools.calculations.scheduler import Scheduler
 from csslib.tools.calculations.worker import JobState, RemoteWorker, Worker
 from csslib.tools.dataloader import DataLoader
-from pymatgen.io.vasp import Vasprun
-
-
-def _find_existing_file(workdir: str, candidate_names: list[str]) -> str | None:
-    for candidate_name in candidate_names:
-        candidate_path = os.path.join(workdir, candidate_name)
-        if os.path.exists(candidate_path):
-            return candidate_path
-    for root, _, files in os.walk(workdir):
-        for candidate_name in candidate_names:
-            if candidate_name in files:
-                return os.path.join(root, candidate_name)
-    return None
-
-
-def _default_vasp_parser(workdir: str):
-    vasprun_path = _find_existing_file(workdir, ["vasprun.xml"])
-    if vasprun_path is None:
-        raise FileNotFoundError(f"vasprun.xml was not found in {workdir}")
-    return Vasprun(vasprun_path, parse_potcar_file=False)
-
-
-@dataclass
-class EspressoRunFallback:
-    """
-        Lightweight fallback result for Quantum Espresso calculations when the optional PWxml parser is unavailable.
-    """
-
-    workdir: str
-    xml_path: str | None
-    output_path: str | None
-    xml_tree: ET.ElementTree | None = None
-    parser_name: str = "fallback"
-    is_complete_parser: bool = False
-
-
-def _fallback_espresso_parser(workdir: str) -> EspressoRunFallback:
-    xml_path = _find_existing_file(workdir, ["pwscf.xml", "data-file-schema.xml"])
-    output_path = _find_existing_file(workdir, ["pw.out", "espresso.out", "scf.out", "relax.out"])
-    xml_tree = ET.parse(xml_path) if xml_path is not None else None
-    return EspressoRunFallback(
-        workdir=workdir,
-        xml_path=xml_path,
-        output_path=output_path,
-        xml_tree=xml_tree,
-    )
-
-
-def make_espresso_pwxml_parser(allow_fallback: bool = True, **pwxml_kwargs) -> Callable[[str], Any]:
-    def _parser(workdir: str):
-        try:
-            from pymatgen.io.espresso.outputs import PWxml
-        except ImportError as exc:
-            if not allow_fallback:
-                message = "Full Quantum Espresso parsing requires the pymatgen-io-espresso package. "
-                message += "Install it with: pip install git+https://github.com/Griffin-Group/pymatgen-io-espresso"
-                raise ImportError(message) from exc
-            warnings.warn(
-                "pymatgen-io-espresso is not installed. Falling back to a lightweight Quantum Espresso result object. "
-                "Install the optional dependency for full Vasprun-like parsing.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            return _fallback_espresso_parser(workdir)
-
-        xml_path = _find_existing_file(workdir, ["pwscf.xml", "data-file-schema.xml"])
-        if xml_path is None:
-            raise FileNotFoundError(f"Quantum Espresso XML output was not found in {workdir}")
-        return PWxml(xml_path, **pwxml_kwargs)
-
-    return _parser
-
-
-def _default_espresso_parser(workdir: str):
-    return make_espresso_pwxml_parser()(workdir)
 
 
 @dataclass
@@ -118,18 +40,11 @@ class CalculationInfo:
     remote_path: str | None = None
 
 
-class CalculationStatus(Enum):
-    """
-        Class for calculation status trace.
-    """
-
-    PENDING = 0
-    STARTED = 1
-    COMPLETED = 2
-
-
 @dataclass
 class ActiveCalculation:
+    """
+        Stores runtime metadata for a calculation that is currently tracked by the inspector.
+    """
     index: Any
     server: str
     worker: Worker | RemoteWorker
@@ -150,7 +65,7 @@ class Calculator:
         data: str | DataLoader,
         inputs: InputSet | Any,
         parser: Callable | Any,
-        cmd: str | list[str],
+        cmd: MPI | SLURM | list[MPI] | list[SLURM],
         remote_path: str,
         local_path: str | None = None,
         loading_files: list[str] | None = None,
@@ -165,6 +80,33 @@ class Calculator:
         use_local: bool = False,
         **dataloader_fields,
     ):
+        """
+            Initializes the calculator, dataset, resource configuration and runtime state.
+
+            Args:
+                data (str | DataLoader): path to the dataset or an already initialized DataLoader object.
+                inputs (InputSet | Any): input-set object that prepares package-specific input files for one structure.
+                parser (Callable | Any): parser callable that converts finished calculation files into a result object.
+                cmd (str | list[str]): launch command or commands for local and/or remote resources.
+                remote_path (str): path to the root directory where calculation working folders will be created.
+                local_path (str | None, optional): path to the local directory where selected output files will be stored.
+                Defaults to None.
+                loading_files (list[str] | None, optional): relative paths to files that should be copied after the calculation finishes.
+                Defaults to None.
+                server_ip (str | list[str] | None, optional): one server address or a list of remote server addresses. Defaults to None.
+                port (int | list[int], optional): SSH port or ports for remote connections. Defaults to 22.
+                username (str | list[str] | None, optional): remote username or usernames. Defaults to None.
+                password (str | list[str] | None, optional): remote password or passwords. Defaults to None.
+                host_keys_path (str | None, optional): path to known hosts file. Defaults to None.
+                max_workers (int | list[int] | None, optional): maximal number of workers allowed on each resource. Defaults to None.
+                max_connection_attempts (int, optional): number of reconnection attempts for remote resources. Defaults to 5.
+                use_sftp (bool, optional): if True SFTP is used for file transfer instead of SCP. Defaults to False.
+                use_local (bool, optional): if True local machine is included into the scheduling pool. Defaults to False.
+                **dataloader_fields: extra keyword arguments forwarded to DataLoader when data is passed as a path.
+
+            Raise:
+                CalculatorError: if loading_files is empty or initialization parameters are inconsistent.
+        """
         self.__data = data
         self.__inputs = inputs
         self.__parser = parser
@@ -202,11 +144,21 @@ class Calculator:
         self.__state_lock = threading.RLock()
         self.__change_event = threading.Event()
         self.__stop_event = threading.Event()
+        
+        self.__inspector: threading.Thread | None = None
+        self.__looper: threading.Thread | None = None
+        
         self.__active_calculations: dict[Any, ActiveCalculation] = {}
         self.__priority_pending_indices = deque()
         self.__errors: list[tuple[Any, str, str]] = []
 
     def _connect(self):
+        """
+            Establishes all configured remote connections and keeps only successfully connected servers.
+
+            Raise:
+                CalculatorError: if remote servers were configured but none of the connections was established successfully.
+        """
         self.__connections = {}
         for server, config in self.__server_configs.items():
             connection = RemoteConnection(
@@ -224,6 +176,12 @@ class Calculator:
             raise CalculatorError("No one connection was successful. Please verify your internet connection or connection settings.")
 
     def __validate_init_parameters(self):
+        """
+            Validates combinations of initialization arguments for local and remote execution modes.
+
+            Raise:
+                CalculatorError: if provided ports, usernames, passwords, commands or worker limits are inconsistent with server_ip.
+        """
         if self.__server_ip is None:
             return
 
@@ -260,6 +218,13 @@ class Calculator:
                 raise CalculatorError("Cmd command parameter should be str or list[str] with the size equal to the size of server_ip list.")
 
     def __prepare_init_parameters(self):
+        """
+            Normalizes server-dependent initialization arguments and converts list-like settings into internal dictionaries.
+
+            Raise:
+                CalculatorError: if local execution is requested but the corresponding local command or worker count is missing.
+        """
+        
         self.__server_configs = {}
         if self.__server_ip is None:
             self.__server_ip = []
@@ -316,15 +281,24 @@ class Calculator:
             raise CalculatorError("Local cmd must exist when use_local is True.")
 
     def _prepare_dataset(self):
-        df = self.__data.get_df()
-        if "calculation_status" not in df.columns:
-            df["calculation_status"] = [CalculationStatus.PENDING for _ in range(len(df))]
-        if "calculation_info" not in df.columns:
-            df["calculation_info"] = [CalculationInfo() for _ in range(len(df))]
-        if "calculation_output" not in df.columns:
-            df["calculation_output"] = [None for _ in range(len(df))]
+        """
+            Adds calculation status, metadata and parsed output columns to the dataset when they are missing.
+        """
+        
+        if "calculation_status" not in self.__data.columns:
+            self.__data["calculation_status"] = [JobState.PENDING for _ in range(len(self.__data))]
+        if "calculation_info" not in self.__data.columns:
+            self.__data["calculation_info"] = [CalculationInfo() for _ in range(len(self.__data))]
+        if "calculation_output" not in self.__data.columns:
+            self.__data["calculation_output"] = [None for _ in range(len(self.__data))]
 
     def __clone_inputs(self):
+        """
+            Creates an isolated copy of the input-set object for one worker.
+
+            Return:
+                InputSet | Any: deep or shallow copy of the current input-set object for isolated worker execution.
+        """
         try:
             return copy.deepcopy(self.__inputs)
         except Exception:
@@ -332,51 +306,44 @@ class Calculator:
 
     @staticmethod
     def __sanitize_name(value: Any) -> str:
+        """
+            Converts an arbitrary value into a filesystem-safe calculation name.
+
+            Args:
+                value (Any): value that should be transformed into a safe directory name.
+
+            Return:
+                str: sanitized string suitable for filesystem paths.
+        """
         return re.sub(r"[^0-9A-Za-z._-]+", "_", str(value))
 
     def __get_cmd(self, server: str) -> str:
-        return self.__cmd if isinstance(self.__cmd, str) else self.__cmd[server]
+        """
+            Returns the execution command associated with the selected server.
 
-    @staticmethod
-    def __get_cmd_prefix(cmd: str) -> str:
-        tokens = shlex.split(cmd)
-        if not tokens:
-            raise CalculatorError("Cmd must not be empty.")
-        token = tokens[0]
-        return token[1:] if token.startswith("#") else token
+            Args:
+                server (str): server name for which the launch command should be returned.
 
-    def __get_server_mode(self, server: str) -> str:
-        prefix = self.__get_cmd_prefix(self.__get_cmd(server))
-        return "slurm" if prefix in Scheduler.SUPPORTING_CMD_PREFIXES_SLURM else "mpi"
-
-    def __get_server_cores(self, server: str) -> int:
-        tokens = shlex.split(self.__get_cmd(server))
-        if not tokens:
-            return 1
-        if tokens[0].startswith("#"):
-            return 1
-        prefix = self.__get_cmd_prefix(self.__get_cmd(server))
-        if prefix in Scheduler.SUPPORTING_CMD_PREFIXES_MPI:
-            for indx, token in enumerate(tokens[:-1]):
-                if token in Scheduler.PARALLEL_FLAGS_MPI:
-                    return int(tokens[indx + 1])
-                if any(token.startswith(f"{flag}=") for flag in Scheduler.PARALLEL_FLAGS_MPI):
-                    return int(token.split("=", maxsplit=1)[1])
-            return 1
-        ntasks = 1
-        cpu_per_task = 1
-        for indx, token in enumerate(tokens):
-            if token in Scheduler.PARALLEL_FLAGS_SLURM_NTASKS and indx + 1 < len(tokens):
-                ntasks = int(tokens[indx + 1])
-            elif any(token.startswith(f"{flag}=") for flag in Scheduler.PARALLEL_FLAGS_SLURM_NTASKS):
-                ntasks = int(token.split("=", maxsplit=1)[1])
-            elif token in Scheduler.PARALLEL_FLAGS_SLURM_CPU_PER_TASK and indx + 1 < len(tokens):
-                cpu_per_task = int(tokens[indx + 1])
-            elif any(token.startswith(f"{flag}=") for flag in Scheduler.PARALLEL_FLAGS_SLURM_CPU_PER_TASK):
-                cpu_per_task = int(token.split("=", maxsplit=1)[1])
-        return ntasks * cpu_per_task
+            Return:
+                str: command string associated with the requested server.
+        """
+        
+        return self.__cmd if not isinstance(self.__cmd, dict) else self.__cmd[server]
 
     def __build_worker(self, server: str, index: Any, cif_data: Any, connection: RemoteConnection | None):
+        """
+            Builds a local or remote worker instance for one dataset row.
+
+            Args:
+                server (str): target server name.
+                index (Any): dataset index of the structure.
+                cif_data (Any): structure representation that should be converted into input files.
+                connection (RemoteConnection | None): remote connection object for the selected server or None for local runs.
+
+            Return:
+                Worker | RemoteWorker: initialized worker object ready for non-blocking launch.
+        """
+        
         calculation_name = f"structure_{self.__sanitize_name(index)}"
         inputs = self.__clone_inputs()
         if server == "local":
@@ -408,6 +375,18 @@ class Calculator:
         )
 
     def __build_slot_connection(self, server: str) -> RemoteConnection | None:
+        """
+            Creates a dedicated remote connection for a worker slot when remote execution is used.
+
+            Args:
+                server (str): target server name for which a dedicated worker connection should be created.
+
+            Raise:
+                CalculatorError: if a remote worker connection could not be established.
+
+            Return:
+                RemoteConnection | None: connected remote resource handle or None for local execution.
+        """
         if server == "local":
             return None
         config = self.__server_configs[server]
@@ -425,14 +404,17 @@ class Calculator:
         return connection
 
     def __inspection_loop(self):
-        dataframe = self.__data.get_df()
+        """
+            Polls all active calculations, finalizes completed jobs and runs parsers.
+        """
+        
         while not self.__stop_event.is_set():
             with self.__state_lock:
                 active_snapshot = list(self.__active_calculations.values())
 
             has_changes = False
             for active in active_snapshot:
-                inspection = active.worker.inspect()
+                inspection = active.worker.inspect() # NOTE: awakes inspect method of the worker.
                 if inspection.state != active.state:
                     active.state = inspection.state
                     has_changes = True
@@ -440,27 +422,27 @@ class Calculator:
                 if inspection.state != JobState.COMPLETED:
                     if inspection.state == JobState.FAILED:
                         with self.__state_lock:
-                            dataframe.at[active.index, "calculation_status"] = CalculationStatus.PENDING
+                            self.__data.at[active.index, "calculation_status"] = JobState.FAILED
                             self.__active_calculations.pop(active.index, None)
                             self.__errors.append((active.index, active.server, inspection.message or "Calculation failed."))
                         has_changes = True
-                    continue
+                    continue # NOTE: continues for loop and inspects other active snapshots
 
                 try:
-                    calculation_info_dict, calculation_output = active.worker.finalize()
+                    calculation_info_dict, calculation_output = active.worker.finalize() # NOTE: awakes finalize method of the worker
                     info = CalculationInfo(**calculation_info_dict)
                 except Exception as exc:
                     with self.__state_lock:
-                        dataframe.at[active.index, "calculation_status"] = CalculationStatus.PENDING
+                        self.__data.at[active.index, "calculation_status"] = JobState.FAILED
                         self.__active_calculations.pop(active.index, None)
                         self.__errors.append((active.index, active.server, str(exc)))
                     has_changes = True
                     continue
 
                 with self.__state_lock:
-                    dataframe.at[active.index, "calculation_info"] = info
-                    dataframe.at[active.index, "calculation_output"] = calculation_output
-                    dataframe.at[active.index, "calculation_status"] = CalculationStatus.COMPLETED
+                    self.__data.at[active.index, "calculation_info"] = info
+                    self.__data.at[active.index, "calculation_output"] = calculation_output
+                    self.__data.at[active.index, "calculation_status"] = JobState.COMPLETED
                     self.__active_calculations.pop(active.index, None)
                 has_changes = True
 
@@ -469,6 +451,12 @@ class Calculator:
             self.__stop_event.wait(self.INSPECTOR_INTERVAL_SECONDS)
 
     def __raise_if_errors(self):
+        """
+            Raises a CalculatorError if at least one calculation failure has already been recorded.
+
+            Raise:
+                CalculatorError: if at least one calculation failure was already recorded by the inspector thread.
+        """
         with self.__state_lock:
             if not self.__errors:
                 return
@@ -476,6 +464,9 @@ class Calculator:
         raise CalculatorError(f"{len(self.__errors)} calculations failed. First error: index={index}, server={server}, error={message}")
 
     def __cancel_active_calculations(self):
+        """
+            Attempts to cancel all calculations that are still marked as active.
+        """
         with self.__state_lock:
             active_snapshot = list(self.__active_calculations.values())
         for active in active_snapshot:
@@ -485,20 +476,36 @@ class Calculator:
                 continue
 
     def __active_mpi_counts(self) -> dict[str, int]:
+        """
+            Counts currently active non-SLURM calculations per server.
+
+            Return:
+                dict[str, int]: number of currently active non-SLURM calculations per server.
+        """
         with self.__state_lock:
             active_snapshot = list(self.__active_calculations.values())
         counts = {}
         for active in active_snapshot:
-            if active.worker.resource_manager == "slurm":
+            if isinstance(active.worker._cmd, SLURM):
                 continue
             counts[active.server] = counts.get(active.server, 0) + 1
         return counts
 
     def __compute_launch_slots(self, desired_distribution: dict[str, int]) -> dict[str, int]:
+        """
+            Computes how many new calculations can be launched on each server right now.
+
+            Args:
+                desired_distribution (dict[str, int]): scheduler output describing desired worker counts per server.
+
+            Return:
+                dict[str, int]: number of new calculations that may be launched right now on each server.
+        """
+        
         active_mpi = self.__active_mpi_counts()
         launch_slots = {}
         for server, desired_workers in desired_distribution.items():
-            if self.__get_server_mode(server) == "slurm":
+            if isinstance(self.__get_cmd(server), SLURM):
                 slots = max(desired_workers, 0)
             else:
                 slots = max(desired_workers - active_mpi.get(server, 0), 0)
@@ -507,7 +514,12 @@ class Calculator:
         return launch_slots
 
     def __ordered_pending_indices(self) -> list[Any]:
-        dataframe = self.__data.get_df()
+        """
+            Builds the ordered list of dataset indices that are still pending.
+
+            Return:
+                list[Any]: ordered list of dataset indices that are still waiting for calculation.
+        """
         ordered = []
         seen = set()
 
@@ -515,18 +527,27 @@ class Calculator:
             index = self.__priority_pending_indices.popleft()
             if index in seen:
                 continue
-            if dataframe.at[index, "calculation_status"] == CalculationStatus.PENDING:
+            if self.__data.at[index, "calculation_status"] in (JobState.FAILED, JobState.PENDING):
                 ordered.append(index)
                 seen.add(index)
 
-        for index, row in dataframe.iterrows():
-            if index in seen:
+        for row in self.__data:
+            if row.Index in seen:
                 continue
-            if row["calculation_status"] == CalculationStatus.PENDING:
-                ordered.append(index)
+            if row.calculation_status == JobState.PENDING:
+                ordered.append(row.Index)
         return ordered
 
     def __remove_fictive_atoms(self, cif_data: str):
+        """
+            Removes fictive atoms from CIF text before input generation when such atoms are present in the dataset.
+
+            Args:
+                cif_data (str): CIF text that may contain fictive atoms which should not be used in calculations.
+
+            Return:
+                str: CIF text with trailing fictive atom records removed when such columns are present in the dataset.
+        """
         fictive_atoms = [column.split('_', maxsplit=1)[0] for column in self.__data.columns if 'fictive' in column]
         if fictive_atoms:
             removed_lines = 0
@@ -542,8 +563,14 @@ class Calculator:
         return cif_data
 
     def __launch_calculation(self, index: Any, server: str):
-        dataframe = self.__data.get_df()
-        cif_data = self.__remove_fictive_atoms(dataframe.at[index, "cif_data"])
+        """
+            Starts one calculation on the selected server and stores its initial metadata.
+
+            Args:
+                index (Any): dataset index of the structure that should be launched.
+                server (str): target server name for the new calculation.
+        """
+        cif_data = self.__remove_fictive_atoms(self.__data.at[index, "cif_data"])
         connection = self.__build_slot_connection(server)
         worker = self.__build_worker(server, index, cif_data, connection)
         info = worker.start()
@@ -551,19 +578,39 @@ class Calculator:
             index=index,
             server=server,
             worker=worker,
-            state=JobState.PENDING if worker.launch_mode == "slurm-job" else JobState.RUNNING,
+            state=JobState.PENDING if isinstance(self.__get_cmd(server), SLURM) else JobState.RUNNING,
         )
         with self.__state_lock:
             self.__active_calculations[index] = active
-            dataframe.at[index, "calculation_status"] = CalculationStatus.STARTED
-            dataframe.at[index, "calculation_info"] = CalculationInfo(**info)
+            self.__data.at[index, "calculation_status"] = JobState.RUNNING
+            self.__data.at[index, "calculation_info"] = CalculationInfo(**info)
 
     def __server_sort_key(self, server: str) -> tuple[int, int, str]:
-        mode = self.__get_server_mode(server)
-        return (0 if mode == "mpi" else 1, -self.__get_server_cores(server), str(server))
+        """
+            Builds a stable priority key used to order servers during dispatch.
+
+            Args:
+                server (str): server name for which priority key should be built.
+
+            Return:
+                tuple[int, int, str]: tuple used for stable dispatch ordering between MPI and SLURM resources.
+        """
+        
+        cmd = self.__get_cmd(server)
+        return (0 if isinstance(cmd, MPI) else 1, -cmd.cores_number if isinstance(cmd, MPI) else -cmd.ntasks * cmd.cpu_per_task, str(server))
 
     def __migrate_pending_slurm_to_mpi(self, launch_slots: dict[str, int]) -> bool:
-        mpi_free_slots = sum(slots for server, slots in launch_slots.items() if self.__get_server_mode(server) == "mpi")
+        """
+        Moves cancelable pending SLURM jobs back to the queue when new MPI slots become available.
+
+        Args:
+            launch_slots (dict[str, int]): currently available launch slots on each server.
+
+        Return:
+            bool: True if at least one pending SLURM job was cancelled and returned to the pending queue.
+        """
+        
+        mpi_free_slots = sum(slots for server, slots in launch_slots.items() if isinstance(self.__get_cmd(server), MPI))
         if mpi_free_slots <= 0:
             return False
 
@@ -573,20 +620,23 @@ class Calculator:
         if not migratable:
             return False
 
-        dataframe = self.__data.get_df()
         has_changes = False
         for active in sorted(migratable, key=lambda item: item.submitted_at)[:mpi_free_slots]:
             if not active.worker.cancel():
                 continue
             with self.__state_lock:
                 self.__active_calculations.pop(active.index, None)
-                dataframe.at[active.index, "calculation_status"] = CalculationStatus.PENDING
-                dataframe.at[active.index, "calculation_info"] = CalculationInfo()
+                self.__data.at[active.index, "calculation_status"] = JobState.PENDING
+                self.__data.at[active.index, "calculation_info"] = CalculationInfo()
                 self.__priority_pending_indices.appendleft(active.index)
             has_changes = True
         return has_changes
 
     def __dispatch_pending(self):
+        """
+            Recomputes resource availability and launches pending structures into free execution slots.
+        """
+        
         desired_distribution = self.__scheduler()
         self.__workers_distribution = desired_distribution
         launch_slots = self.__compute_launch_slots(desired_distribution)
@@ -608,14 +658,51 @@ class Calculator:
             self.__launch_calculation(index, server)
 
     def __is_finished(self) -> bool:
-        dataframe = self.__data.get_df()
-        if any(status != CalculationStatus.COMPLETED for status in dataframe["calculation_status"]):
+        """
+            Checks whether all dataset rows are completed and no active calculations remain.
+
+            Return:
+                bool: True if all dataset rows are completed and no active calculations remain.
+        """
+        if any(status != JobState.COMPLETED for status in self.__data.calculation_status):
             return False
         return not self.__active_calculations
 
-    def run(self): # TODO: if calculation was started, then we need to check calculation before it will be restarted. Also we can add parse method after each calculation.
+    def __loop(self):
         """
-            Starts the dispatch loop of DFT calculations for the data stored in DataFrame.
+            Method representing loop of the calculator run.
+        """
+        
+        try:
+            while True:
+                self.__raise_if_errors()
+                with self.__state_lock:
+                    if self.__is_finished():
+                        break
+                self.__dispatch_pending()
+                self.__raise_if_errors()
+                with self.__state_lock:
+                    if self.__is_finished():
+                        break
+                self.__change_event.wait(self.REPLAN_WAIT_SECONDS)
+                self.__change_event.clear()
+        finally:
+            self.__stop_event.set()
+            self.__inspector.join(timeout=self.INSPECTOR_INTERVAL_SECONDS + 1)
+            if self.__errors:
+                self.__cancel_active_calculations()
+
+        self.__raise_if_errors()
+
+    def run(self, nonblocking: bool = False): # TODO: if calculation was started, then we need to check calculation before it will be restarted. Also we can add parse method after each calculation.
+        """
+            Starts the calculation dispatch loop.
+
+            Args:
+                nonblocking (bool, optional): starts calculator in the nonblocking mode. Defaults to False.
+
+            Return:
+                DataLoader: updated DataLoader object with calculation statuses, metadata and parsed outputs.
         """
         self._prepare_dataset()
         os.makedirs(self.__local_path, exist_ok=True)
@@ -637,28 +724,14 @@ class Calculator:
             self.__active_calculations.clear()
             self.__priority_pending_indices.clear()
 
-        inspector = threading.Thread(target=self.__inspection_loop, name="csslib-calculation-inspector", daemon=True)
-        inspector.start()
-        try:
-            while True:
-                self.__raise_if_errors()
-                with self.__state_lock:
-                    if self.__is_finished():
-                        break
-                self.__dispatch_pending()
-                self.__raise_if_errors()
-                with self.__state_lock:
-                    if self.__is_finished():
-                        break
-                self.__change_event.wait(self.REPLAN_WAIT_SECONDS)
-                self.__change_event.clear()
-        finally:
-            self.__stop_event.set()
-            inspector.join(timeout=self.INSPECTOR_INTERVAL_SECONDS + 1)
-            if self.__errors:
-                self.__cancel_active_calculations()
-
-        self.__raise_if_errors()
+        self.__inspector = threading.Thread(target=self.__inspection_loop, name="csslib-calculation-inspector", daemon=True)
+        self.__inspector.start()
+        if not nonblocking:
+            self.__loop()
+        else:
+            self.__looper = threading.Thread(target=self.__loop, name="csslib-calculator-looper", daemon=True)
+            self.__looper.start()
+        
         return self.__data
 
 
@@ -672,7 +745,7 @@ class VaspCalculator(Calculator):
     def __init__(
         self,
         data: str | DataLoader,
-        cmd: str | list[str],
+        cmd: MPI | SLURM | list[MPI] | list[SLURM],
         remote_path: str,
         local_path: str | None = None,
         input_paths: str | os.PathLike | list[str | os.PathLike] | None = None,
@@ -685,6 +758,25 @@ class VaspCalculator(Calculator):
         assemble_potcar: bool = False,
         **kwargs,
     ):
+        """
+            Initializes a partially preconfigured VASP calculator instance.
+
+            Args:
+                data (str | DataLoader): path to the dataset or initialized DataLoader object.
+                cmd (MPI | SLURM | list[MPI] | list[SLURM]): command or commands used for VASP execution.
+                remote_path (str): root directory where calculation work folders will be created.
+                local_path (str | None, optional): local directory for copied calculation outputs. Defaults to None.
+                input_paths (str | os.PathLike | list[str | os.PathLike] | None, optional): path or paths to static VASP input templates. Defaults to None.
+                inputs (VaspInputs | None, optional): preconfigured VaspInputs object. Defaults to None.
+                parser (Callable | None, optional): custom VASP result parser. Defaults to None.
+                loading_files (list[str] | None, optional): files that should be copied after calculation. Defaults to None.
+                transform (Callable[[Any], Any] | None, optional): transformation applied to CIF data before POSCAR generation. Defaults to None.
+                potcar_dir (str | os.PathLike | None, optional): directory with POTCAR fragments. Defaults to None.
+                potcar_map (dict[str, str] | None, optional): mapping from element symbols to POTCAR fragment names. Defaults to None.
+                assemble_potcar (bool, optional): if True POTCAR is assembled dynamically for each structure. Defaults to False.
+                **kwargs: additional keyword arguments forwarded to Calculator.
+        """
+        
         inputs_object = inputs if inputs is not None else VaspInputs(
             input_paths=input_paths,
             transform=transform,
@@ -695,7 +787,7 @@ class VaspCalculator(Calculator):
         super().__init__(
             data=data,
             inputs=inputs_object,
-            parser=parser or _default_vasp_parser,
+            parser=parser or default_vasp_parser,
             cmd=cmd,
             remote_path=remote_path,
             local_path=local_path,
@@ -714,7 +806,7 @@ class EspressoCalculator(Calculator):
     def __init__(
         self,
         data: str | DataLoader,
-        cmd: str | list[str],
+        cmd: MPI | SLURM | list[MPI] | list[SLURM],
         remote_path: str,
         local_path: str | None = None,
         input_paths: str | os.PathLike | list[str | os.PathLike] | None = None,
@@ -736,6 +828,33 @@ class EspressoCalculator(Calculator):
         pwxml_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ):
+        """
+            Initializes a partially preconfigured Quantum Espresso calculator instance.
+
+            Args:
+                data (str | DataLoader): path to the dataset or initialized DataLoader object.
+                cmd (str | list[str]): command or commands used for Quantum Espresso execution.
+                remote_path (str): root directory where calculation work folders will be created.
+                local_path (str | None, optional): local directory for copied calculation outputs. Defaults to None.
+                input_paths (str | os.PathLike | list[str | os.PathLike] | None, optional): path or paths to static QE input templates. Defaults to None.
+                inputs (EspressoInputs | None, optional): preconfigured EspressoInputs object. Defaults to None.
+                parser (Callable | None, optional): custom QE result parser. Defaults to None.
+                loading_files (list[str] | None, optional): files that should be copied after calculation. Defaults to None.
+                transform (Callable[[Any], Any] | None, optional): transformation applied to CIF data before input generation. Defaults to None.
+                pseudopotentials (dict[str, str] | None, optional): explicit pseudopotential mapping. Defaults to None.
+                pseudo_dir (str | None, optional): relative pseudo directory written into pw.in. Defaults to None.
+                control (dict[str, Any] | None, optional): Quantum Espresso CONTROL namelist. Defaults to None.
+                system (dict[str, Any] | None, optional): Quantum Espresso SYSTEM namelist. Defaults to None.
+                electrons (dict[str, Any] | None, optional): Quantum Espresso ELECTRONS namelist. Defaults to None.
+                ions (dict[str, Any] | None, optional): Quantum Espresso IONS namelist. Defaults to None.
+                cell (dict[str, Any] | None, optional): Quantum Espresso CELL namelist. Defaults to None.
+                kpoints_grid (tuple[int, int, int], optional): Monkhorst-Pack k-point grid. Defaults to (1, 1, 1).
+                kpoints_shift (tuple[int, int, int], optional): k-point grid shift. Defaults to (0, 0, 0).
+                use_primitive (bool, optional): if True primitive standardized structure is used. Defaults to False.
+                symprec (float, optional): tolerance used during symmetry analysis. Defaults to 1e-3.
+                pwxml_kwargs (dict[str, Any] | None, optional): keyword arguments forwarded to PWxml parser. Defaults to None.
+                **kwargs: additional keyword arguments forwarded to Calculator.
+        """
         inputs_object = inputs if inputs is not None else EspressoInputs(
             input_paths=input_paths,
             transform=transform,
@@ -754,7 +873,7 @@ class EspressoCalculator(Calculator):
         super().__init__(
             data=data,
             inputs=inputs_object,
-            parser=parser or make_espresso_pwxml_parser(**(pwxml_kwargs or {})),
+            parser=parser or partial(default_espresso_parser, pwxml_kwargs=pwxml_kwargs),
             cmd=cmd,
             remote_path=remote_path,
             local_path=local_path,
