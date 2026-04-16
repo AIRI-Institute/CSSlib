@@ -7,7 +7,10 @@ import paramiko
 import scp
 import socket
 from csslib.exceptions import RemoteConnectionError
+from csslib.logging_ import get_tools_logger
 from enum import Enum
+
+logger = get_tools_logger("calculations.remote")
 
 
 class ConnectionStatus(Enum):
@@ -51,6 +54,7 @@ class RemoteConnection:
         self.connection_status = ConnectionStatus.NONINITIALIZED
         self.has_slurm = False
         while (self.connection_status != ConnectionStatus.CONNECTED and connection_attempts != 0):
+            logger.info("Trying to connect to %s:%s as %s.", self.__hostname, self.__port, self.__username)
             self.connect()
             connection_attempts -= 1
 
@@ -66,26 +70,25 @@ class RemoteConnection:
             self.connection_status = ConnectionStatus.CONNECTED
             self.__open_sftp() if self.__use_sftp else self.__open_scp()
             self.__check_slurm()
+            logger.info("Connection to %s is established. SLURM=%s. IS_SFTP=%s", self.__hostname, self.has_slurm, self.__use_sftp)
         except paramiko.AuthenticationException:
             message = f'Authentication failed when tried to connect to {self.__hostname} on port {self.__port} for user - {self.__username}. '
             message += 'Incorrect username/password/private key or key format (e.g., PuTTY .ppk instead of OpenSSH format). '
             message += 'Server expects a different auth method!'
-            # self.logget.exception("Authentication failed")
+            logger.exception("Authentication failed for %s:%s.", self.__hostname, self.__port)
             raise RemoteConnectionError(message)
         except paramiko.BadHostKeyException:
-            # self.logger.exception(f"Host key mismatch.")
+            logger.exception("Host key mismatch for %s:%s.", self.__hostname, self.__port)
             raise RemoteConnectionError(f"Host key mismatch when tried to connect to {self.__hostname} on port {self.__port} for user - {self.__username}. The server's host key is unknown or has changed.")
         except (paramiko.SSHException, socket.error, socket.gaierror) as e:
-            # self.logger.warning(f"SSH issue: {e}")
             self.connection_status = ConnectionStatus.FAILED
-            # self.logger.warning(f"Socket/Network error: {e}")
+            logger.warning("Connection attempt to %s:%s failed: %s", self.__hostname, self.__port, e)
 
     def __open_sftp(self):
         """
             Opens sftp connection to the remote server.
         """
         self.__file_sharing_client = self.__ssh_client.open_sftp()
-
     def __open_scp(self):
         """
             Opens scp connection to the remote server.
@@ -113,5 +116,8 @@ class RemoteConnection:
         """
             Closes SSH and SFTP/SCP connections to the remote server when RemoteConnection object destroys.
         """
-        self.__file_sharing_client.close()
-        self.__ssh_client.close()
+        try:
+            if self.__file_sharing_client is not None:
+                self.__file_sharing_client.close()
+        finally:
+            self.__ssh_client.close()

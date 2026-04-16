@@ -22,6 +22,9 @@ from typing import Any, Callable
 import paramiko
 import scp
 from csslib.tools.calculations.cmd import MPI, SLURM
+from csslib.logging_ import get_tools_logger
+
+logger = get_tools_logger("calculations.worker")
 
 
 class JobState(Enum):
@@ -48,6 +51,8 @@ class _BaseWorker:
     
     GENERATED_SBATCH_SCRIPT = "csslib.sh"
     MAX_UNKNOWN_SLURM_POLLS = 12
+    COMPLETED_SLURM_STATES = {"COMPLETED"}
+    KNOWN_SLURM_STATES = FAILED_SLURM_STATES | PENDING_SLURM_STATES | RUNNING_SLURM_STATES | COMPLETED_SLURM_STATES
 
     def __init__(
         self,
@@ -116,7 +121,12 @@ class _BaseWorker:
                 int | None: extracted SLURM job id or None when no integer token was found.
         """
         
-        match = re.search(r"\b(\d+)\b", f"{stdout}\n{stderr}")
+        combined_text = f"{stdout}\n{stderr}"
+        last_line = _BaseWorker._last_nonempty_line(combined_text)
+        match = re.search(r"\b(\d+)\b", last_line)
+        if match:
+            return int(match.group(1))
+        match = re.search(r"\b(\d+)\b", combined_text)
         return int(match.group(1)) if match else None
 
     @staticmethod
@@ -246,6 +256,47 @@ class _BaseWorker:
         return "\n".join(lines[-max_lines:]).strip()
 
     @staticmethod
+    def _last_nonempty_line(text: str | None) -> str:
+        """
+            Returns the last non-empty line from a text block.
+
+            Args:
+                text (str | None): raw text that may contain banners or empty lines.
+
+            Return:
+                str: last non-empty stripped line or an empty string.
+        """
+
+        if not text:
+            return ""
+        for line in reversed(text.splitlines()):
+            stripped_line = line.strip()
+            if stripped_line:
+                return stripped_line
+        return ""
+
+    @classmethod
+    def _extract_slurm_states(cls, text: str | None) -> list[str]:
+        """
+            Extracts normalized SLURM states from a raw command output.
+
+            Args:
+                text (str | None): raw output of squeue or sacct.
+
+            Return:
+                list[str]: recognized normalized SLURM states.
+        """
+
+        if not text:
+            return []
+        states = []
+        for line in text.splitlines():
+            normalized_state = cls._normalize_slurm_state(line)
+            if normalized_state in cls.KNOWN_SLURM_STATES:
+                states.append(normalized_state)
+        return states
+
+    @staticmethod
     def _collect_local_files(source_root: str, destination_root: str, loading_files: list[str]):
         """
             Copies selected output files from a work directory into persistent local storage.
@@ -282,10 +333,12 @@ class _BaseWorker:
                 dict: bookkeeping information about the started calculation.
         """
         
+        logger.debug("Preparing worker workspace for %s.", self._calculation_name)
         self._prepare_workspace()
         self._prepare_inputs()
         self._launch_nonblocking()
         self._started = True
+        logger.info("Worker %s is started.", self._calculation_name)
         return self.get_calculation_info()
 
     def inspect(self) -> JobInspection:
@@ -301,7 +354,7 @@ class _BaseWorker:
         self._last_state = inspection.state
         return inspection
 
-    def finalize(self) -> tuple[dict, object]:
+    def finalize(self, verify_completion: bool = True) -> tuple[dict, object]:
         """
             Collects outputs and parses the result of a completed calculation.
 
@@ -311,11 +364,15 @@ class _BaseWorker:
             Return:
                 tuple[dict, object]: calculation info dictionary and parser output object.
         """
-        inspection = self.inspect()
-        if inspection.state != JobState.COMPLETED:
-            raise RuntimeError(inspection.message or f"Cannot finalize calculation in state {inspection.state.value}.")
+        if verify_completion:
+            inspection = self.inspect()
+            if inspection.state != JobState.COMPLETED:
+                raise RuntimeError(inspection.message or f"Cannot finalize calculation in state {inspection.state.value}.")
+        logger.info("Collecting outputs for worker %s.", self._calculation_name)
         self._collect_outputs()
+        logger.info("Parsing outputs for worker %s from %s.", self._calculation_name, self._local_result_path)
         calculation_output = self._parser(self._local_result_path)
+        logger.info("Worker %s is finalized successfully.", self._calculation_name)
         return self.get_calculation_info(), calculation_output
 
     def cancel(self) -> bool:
@@ -330,6 +387,7 @@ class _BaseWorker:
         cancelled = self._cancel_slurm_job() if isinstance(self._cmd, SLURM) else self._cancel_process_job()
         if cancelled:
             self._last_state = JobState.CANCELLED
+            logger.warning("Worker %s was cancelled.", self._calculation_name)
         return cancelled
 
     def get_calculation_info(self) -> dict:
@@ -623,20 +681,20 @@ class Worker(_BaseWorker):
             return JobInspection(JobState.FAILED, self._read_job_streams_for_error() or f"SLURM job exited with code {exitcode}.")
 
         squeue = subprocess.run(f"squeue -h -j {self._jobid} -o %T", cwd=self._work_path, capture_output=True, text=True, shell=True)
-        states = [self._normalize_slurm_state(state) for state in squeue.stdout.splitlines() if state.strip()]
+        states = self._extract_slurm_states(squeue.stdout)
         if states:
             self._reset_unknown_slurm_polls()
             return self._inspection_from_slurm_states(states)
 
         scontrol = subprocess.run(f"scontrol show job {self._jobid}", cwd=self._work_path, capture_output=True, text=True, shell=True)
         if scontrol.returncode == 0:
-            states = re.findall(r"JobState=([A-Z_]+)", scontrol.stdout.upper())
+            states = re.findall(r"JOBSTATE=([A-Z_]+)", scontrol.stdout.upper())
             if states:
                 self._reset_unknown_slurm_polls()
                 return self._inspection_from_slurm_states(states)
 
         sacct = subprocess.run(f"sacct -n -P -j {self._jobid} -o State", cwd=self._work_path, capture_output=True, text=True, shell=True)
-        states = [self._normalize_slurm_state(state) for state in sacct.stdout.splitlines() if state.strip()]
+        states = self._extract_slurm_states(sacct.stdout)
         if states:
             self._reset_unknown_slurm_polls()
             return self._inspection_from_slurm_states(states)
@@ -695,7 +753,8 @@ class Worker(_BaseWorker):
         """
             Copies selected local calculation outputs into the persistent local result directory.
         """
-    
+        
+        logger.debug("Copying local outputs for worker %s from %s to %s.", self._calculation_name, self._work_path, self._local_result_path)
         self._collect_local_files(self._work_path, self._local_result_path, self._loading_files)
 
     def _prepare_inputs(self):
@@ -879,7 +938,14 @@ class RemoteWorker(_BaseWorker):
         os.makedirs(self._staging_path, exist_ok=True)
         os.makedirs(self._local_result_path, exist_ok=True)
 
-    def _exec_remote(self, command: str) -> tuple[str, str, int]:
+    def _exec_remote(
+        self,
+        command: str,
+        *,
+        login_shell: bool = True,
+        interactive_shell: bool = False,
+        allocate_pty: bool = False,
+    ) -> tuple[str, str, int]:
         """
             Executes one remote shell command and returns stdout, stderr and exit code.
 
@@ -891,8 +957,14 @@ class RemoteWorker(_BaseWorker):
         """
         
         self._refresh_remote_clients()
-        wrapped_command = f"bash -ilc {shlex.quote(command)}"
-        _, stdout, stderr = self._ssh.exec_command(wrapped_command, get_pty=True)
+        shell_flags = []
+        if login_shell:
+            shell_flags.append("-l")
+        if interactive_shell:
+            shell_flags.append("-i")
+        shell_flags.append("-c")
+        wrapped_command = f"bash {' '.join(shell_flags)} {shlex.quote(command)}"
+        _, stdout, stderr = self._ssh.exec_command(wrapped_command, get_pty=allocate_pty)
         stdout_text = stdout.read().decode("utf-8", errors="ignore").strip()
         stderr_text = stderr.read().decode("utf-8", errors="ignore").strip()
         return stdout_text, stderr_text, stdout.channel.recv_exit_status()
@@ -918,7 +990,12 @@ class RemoteWorker(_BaseWorker):
         
         self._upload_inputs()
         if isinstance(self._cmd, SLURM) and self._cmd.prefix == "sbatch":
-            stdout, stderr, returncode = self._exec_remote(f"cd {shlex.quote(self._remote_path)} && {self._cmd.get_cmd()}")
+            stdout, stderr, returncode = self._exec_remote(
+                f"cd {shlex.quote(self._remote_path)} && {self._cmd.get_cmd()}",
+                login_shell=True,
+                interactive_shell=True,
+                allocate_pty=True,
+            )
             shutil.rmtree(self._staging_path, ignore_errors=True)
             if returncode != 0:
                 raise RuntimeError(stderr or stdout or f"Remote SLURM command failed in {self._remote_path}.")
@@ -934,7 +1011,12 @@ class RemoteWorker(_BaseWorker):
             f"2> {shlex.quote(self._stderr_filename)} "
             f"< /dev/null; printf '%s' $? > {shlex.quote(self._exitcode_filename)} ) & echo $!"
         )
-        stdout, stderr, returncode = self._exec_remote(command)
+        stdout, stderr, returncode = self._exec_remote(
+            command,
+            login_shell=True,
+            interactive_shell=True,
+            allocate_pty=True,
+        )
         shutil.rmtree(self._staging_path, ignore_errors=True)
         if returncode != 0:
             raise RuntimeError(stderr or stdout or f"Remote command failed to start in {self._remote_path}.")
@@ -1016,18 +1098,19 @@ class RemoteWorker(_BaseWorker):
             f"elif kill -0 {self._pid} 2>/dev/null; then echo RUNNING; "
             f"else echo UNKNOWN; fi"
         )
-        stdout, stderr, returncode = self._exec_remote(command)
+        stdout, stderr, returncode = self._exec_remote(command, login_shell=True, interactive_shell=False, allocate_pty=False)
         if returncode != 0 and stderr:
             return JobInspection(JobState.UNKNOWN, stderr)
-        if stdout.startswith("DONE"):
-            exitcode = int(stdout.split(maxsplit=1)[1])
+        marker_line = self._last_nonempty_line(stdout)
+        if marker_line.startswith("DONE"):
+            exitcode = int(marker_line.split(maxsplit=1)[1])
             if exitcode == 0:
                 return JobInspection(JobState.COMPLETED)
             self._stderr_cache = self._read_remote_file(self._stderr_filename)
             return JobInspection(JobState.FAILED, self._stderr_cache or f"Remote process exited with code {exitcode}.")
-        if stdout.strip() == "RUNNING":
+        if marker_line == "RUNNING":
             return JobInspection(JobState.RUNNING)
-        return JobInspection(JobState.UNKNOWN, "Remote process state could not be determined.")
+        return JobInspection(JobState.UNKNOWN, self._tail_text(stdout) or "Remote process state could not be determined.")
 
     def _inspect_slurm_job(self) -> JobInspection:
         """
@@ -1044,21 +1127,21 @@ class RemoteWorker(_BaseWorker):
                 return JobInspection(JobState.COMPLETED)
             return JobInspection(JobState.FAILED, self._read_job_streams_for_error() or f"Remote SLURM job exited with code {exitcode}.")
 
-        stdout, _, _ = self._exec_remote(f"squeue -h -j {self._jobid} -o %T")
-        states = [self._normalize_slurm_state(state) for state in stdout.splitlines() if state.strip()]
+        stdout, _, _ = self._exec_remote(f"squeue -h -j {self._jobid} -o %T", login_shell=True, interactive_shell=False, allocate_pty=False)
+        states = self._extract_slurm_states(stdout)
         if states:
             self._reset_unknown_slurm_polls()
             return self._inspection_from_slurm_states(states)
 
-        stdout, _, returncode = self._exec_remote(f"scontrol show job {self._jobid}")
+        stdout, _, returncode = self._exec_remote(f"scontrol show job {self._jobid}", login_shell=True, interactive_shell=False, allocate_pty=False)
         if returncode == 0:
             states = re.findall(r"JOBSTATE=([A-Z_]+)", stdout.upper())
             if states:
                 self._reset_unknown_slurm_polls()
                 return self._inspection_from_slurm_states(states)
 
-        stdout, _, _ = self._exec_remote(f"sacct -n -P -j {self._jobid} -o State")
-        states = [self._normalize_slurm_state(state) for state in stdout.splitlines() if state.strip()]
+        stdout, _, _ = self._exec_remote(f"sacct -n -P -j {self._jobid} -o State", login_shell=True, interactive_shell=False, allocate_pty=False)
+        states = self._extract_slurm_states(stdout)
         if states:
             self._reset_unknown_slurm_polls()
             return self._inspection_from_slurm_states(states)
@@ -1187,7 +1270,9 @@ class RemoteWorker(_BaseWorker):
             local_item = os.path.join(self._local_result_path, relative_path)
             path_type = self._remote_path_type(remote_item)
             if path_type is None:
+                logger.debug("Remote output %s for worker %s is absent.", remote_item, self._calculation_name)
                 continue
+            logger.debug("Downloading remote output %s for worker %s to %s.", remote_item, self._calculation_name, local_item)
             if isinstance(self._file_sharing, scp.SCPClient):
                 self._download_scp(remote_item, local_item, recursive=(path_type == "dir"))
             else:
@@ -1251,7 +1336,12 @@ class RemoteWorker(_BaseWorker):
                 str | None: remote file content or None when the file does not exist or cannot be read.
         """
         
-        stdout, _, returncode = self._exec_remote(f"cd {shlex.quote(self._remote_path)} && cat {shlex.quote(relative_path)}")
+        stdout, _, returncode = self._exec_remote(
+            f"cd {shlex.quote(self._remote_path)} && cat {shlex.quote(relative_path)}",
+            login_shell=True,
+            interactive_shell=False,
+            allocate_pty=False,
+        )
         if returncode != 0:
             return None
         return stdout.strip()

@@ -10,9 +10,12 @@ import os
 import pandas as pd
 import pickle
 from csslib.exceptions import DataLoaderError
+from csslib.logging_ import get_tools_logger
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from typing import Any, Callable, Iterator
+
+logger = get_tools_logger("dataloader")
 
 
 class DataLoader:
@@ -63,6 +66,7 @@ class DataLoader:
         self.save_loaded_data_filepath = os.path.join(self.base_path, save_loaded_data_filepath.split('/')[-1]) if save_loaded_data_filepath == "<path>/selected.pkl.gz" else save_loaded_data_filepath
         self.copy_unloaded_data_path = os.path.join(self.base_path, copy_unloaded_data_path.split('/')[-1]) if copy_unloaded_data_path == "<path>/css_unselected" else copy_unloaded_data_path
 
+        logger.info("Initializing DataLoader for path=%s with num_workers=%s.", path, num_workers)
         self.__df = self.__load()
 
     @staticmethod
@@ -81,6 +85,7 @@ class DataLoader:
             Return:
                 pandas.DataFrame: table with information about css structures.
         """
+        logger.debug("Reading dataset archive %s.", file_path)
         with gzip.open(file_path, "rb") as archive:
             df = pickle.load(archive)
 
@@ -96,6 +101,7 @@ class DataLoader:
                     pass
                 except PermissionError:
                     raise DataLoaderError(f'Permission error occured while tried to remove {os.path.join(copy_unloaded_data_path, os.path.basename(file_path))}. Remove it manually.')
+        logger.debug("Archive %s is loaded with %d rows after transformation.", file_path, len(transformed_df))
         return transformed_df
 
     def __load(self) -> pd.DataFrame:
@@ -108,11 +114,14 @@ class DataLoader:
         """
         if self.__copy_unloaded_data:
             os.makedirs(self.copy_unloaded_data_path, exist_ok=True)
+            logger.debug("Ensured directory for unloaded data: %s.", self.copy_unloaded_data_path)
 
         if self.num_workers == 1 or len(self.__pkl_gz) == 1:
+            logger.info("Loading %d archive(s) in serial mode.", len(self.__pkl_gz))
             results = [self.__parse_worker(pkl, self.transformation_function, self.copy_unloaded_data_path if self.__copy_unloaded_data else None)
                        for pkl in tqdm(self.__pkl_gz, desc="Collecting metadata of CSS structures", unit=" .pkl.gz", ncols=200)]
         else:
+            logger.info("Loading %d archive(s) in parallel mode with %d workers.", len(self.__pkl_gz), self.num_workers)
             results = Parallel(n_jobs=self.num_workers, backend="loky")(
                 delayed(self.__parse_worker)(pkl, self.transformation_function, self.copy_unloaded_data_path if self.__copy_unloaded_data else None)
                 for pkl in tqdm(self.__pkl_gz, desc="Collecting metadata of CSS structures", unit=" .pkl.gz", ncols=200)
@@ -121,8 +130,10 @@ class DataLoader:
         df = pd.concat(results, ignore_index=True).reset_index(drop=True) if results else pd.DataFrame()
         if self.__save_loaded_data:
             df.to_pickle(self.save_loaded_data_filepath)
+            logger.info("Loaded dataframe is saved to %s.", self.save_loaded_data_filepath)
         if self.__copy_unloaded_data:
             self.__unselected_configuration_were_saved = True
+        logger.info("DataLoader finished loading %d rows.", len(df))
         return df
 
     def apply(self, transformation_function: Callable):
@@ -142,6 +153,7 @@ class DataLoader:
 
         self.transformation_function = transformation_function
         self.__df = self.transformation_function(self.__df)
+        logger.info("Transformation function was applied. Dataframe now contains %d rows.", len(self.__df))
 
     def save_df(self, filepath: str):
         """
@@ -152,6 +164,7 @@ class DataLoader:
                 filepath (str): full or relative path to the archive.
         """
         self.__df.to_pickle(filepath)
+        logger.info("Dataframe with %d rows is saved to %s.", len(self.__df), filepath)
 
     def select_add(self, select_path: str | None = None, transformation_function: Callable | None = None,
                    save_merged_df_to: str | None = None):
@@ -187,6 +200,7 @@ class DataLoader:
         added_df = self.__load()
         self.__df = pd.concat([self.__df, added_df], ignore_index=True)
         self.save_df(save_merged_df_to if save_merged_df_to is not None else self.save_loaded_data_filepath)
+        logger.info("Additional selection merged %d rows. Dataframe now contains %d rows.", len(added_df), len(self.__df))
 
     def set_transformation_function(self, transformation_function: Callable):
         """
@@ -197,6 +211,7 @@ class DataLoader:
                 As the input function must get pandas.Dataframe object and return transformed pandas.Dataframe object.
         """
         self.transformation_function = transformation_function
+        logger.debug("Transformation function was updated for DataLoader %s.", hex(id(self)))
 
     def get_df(self) -> pd.DataFrame:
         """

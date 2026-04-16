@@ -18,6 +18,7 @@ from functools import partial
 from typing import Any, Callable
 
 from csslib.exceptions import CalculatorError
+from csslib.logging_ import get_tools_logger
 from csslib.tools.calculations.cmd import MPI, SLURM
 from csslib.tools.calculations.inputs import EspressoInputs, InputSet, VaspInputs
 from csslib.tools.calculations.parser import default_espresso_parser, default_vasp_parser
@@ -25,6 +26,8 @@ from csslib.tools.calculations.remote import ConnectionStatus, RemoteConnection
 from csslib.tools.calculations.scheduler import Scheduler
 from csslib.tools.calculations.worker import JobState, RemoteWorker, Worker
 from csslib.tools.dataloader import DataLoader
+
+logger = get_tools_logger("calculations.calculator")
 
 
 @dataclass
@@ -151,6 +154,14 @@ class Calculator:
         self.__active_calculations: dict[Any, ActiveCalculation] = {}
         self.__priority_pending_indices = deque()
         self.__errors: list[tuple[Any, str, str]] = []
+        logger.debug(
+            "Calculator initialized: structures=%d, use_local=%s, remote_servers=%d, local_path=%s, remote_path=%s.",
+            len(self.__data),
+            self.__use_local,
+            len(self.__server_configs),
+            self.__local_path,
+            self.__remote_path,
+        )
 
     def _connect(self):
         """
@@ -161,6 +172,7 @@ class Calculator:
         """
         self.__connections = {}
         for server, config in self.__server_configs.items():
+            logger.info("Connecting to remote server %s as %s.", server, config["username"])
             connection = RemoteConnection(
                 server,
                 config["port"],
@@ -172,6 +184,9 @@ class Calculator:
             )
             if connection.connection_status == ConnectionStatus.CONNECTED:
                 self.__connections[server] = connection
+                logger.info("Remote server %s is connected.", server)
+            else:
+                logger.warning("Remote server %s is unavailable and will be skipped.", server)
         if self.__server_configs and not self.__connections:
             raise CalculatorError("No one connection was successful. Please verify your internet connection or connection settings.")
 
@@ -287,10 +302,13 @@ class Calculator:
         
         if "calculation_status" not in self.__data.columns:
             self.__data["calculation_status"] = [JobState.PENDING for _ in range(len(self.__data))]
+        else:
+            self.__data["calculation_status"][self.__data["calculation_status"] == JobState.FAILED] = JobState.PENDING
         if "calculation_info" not in self.__data.columns:
             self.__data["calculation_info"] = [CalculationInfo() for _ in range(len(self.__data))]
         if "calculation_output" not in self.__data.columns:
             self.__data["calculation_output"] = [None for _ in range(len(self.__data))]
+        logger.debug("Calculator dataset is prepared with status, info and output columns.")
 
     def __clone_inputs(self):
         """
@@ -403,51 +421,119 @@ class Calculator:
             raise CalculatorError(f"Unable to create worker connection for server {server}.")
         return connection
 
+    def __record_failure(self, active: ActiveCalculation, message: str) -> bool:
+        """
+            Stores a failed calculation in the dataframe and error list.
+
+            Args:
+                active (ActiveCalculation): tracked calculation descriptor.
+                message (str): failure description.
+
+            Return:
+                bool: True if the active calculation was recorded as failed, False if it was already processed.
+        """
+
+        with self.__state_lock:
+            if self.__active_calculations.pop(active.index, None) is None:
+                return False
+            self.__data.at[active.index, "calculation_status"] = JobState.FAILED
+            self.__errors.append((active.index, active.server, message))
+        logger.error("Calculation index=%s on %s failed: %s", active.index, active.server, message)
+        return True
+
+    def __store_state(self, active: ActiveCalculation, state: JobState):
+        """
+            Updates dataframe status for an active calculation.
+
+            Args:
+                active (ActiveCalculation): tracked calculation descriptor.
+                state (JobState): new runtime state.
+        """
+
+        with self.__state_lock:
+            if active.index in self.__active_calculations:
+                self.__data.at[active.index, "calculation_status"] = state
+
+    def __finalize_completed_calculation(self, active: ActiveCalculation) -> bool:
+        """
+            Finalizes a completed calculation, collects outputs and stores parser results.
+
+            Args:
+                active (ActiveCalculation): tracked completed calculation.
+
+            Return:
+                bool: True if new results were stored, False if the calculation was already processed.
+        """
+
+        try:
+            calculation_info_dict, calculation_output = active.worker.finalize(verify_completion=False)
+            info = CalculationInfo(**calculation_info_dict)
+        except Exception as exc:
+            logger.exception("Unable to finalize calculation index=%s on %s.", active.index, active.server)
+            return self.__record_failure(active, str(exc))
+
+        with self.__state_lock:
+            if self.__active_calculations.pop(active.index, None) is None:
+                return False
+            self.__data.at[active.index, "calculation_info"] = info
+            self.__data.at[active.index, "calculation_output"] = calculation_output
+            self.__data.at[active.index, "calculation_status"] = JobState.COMPLETED
+        logger.info("Calculation index=%s on %s is completed and parsed.", active.index, active.server)
+        return True
+
+    def __synchronize_active_calculations(self) -> bool:
+        """
+            Performs one synchronization pass over active calculations.
+
+            Return:
+                bool: True if dataframe state changed during synchronization.
+        """
+
+        with self.__state_lock:
+            active_snapshot = list(self.__active_calculations.values())
+
+        has_changes = False
+        for active in active_snapshot:
+            try:
+                inspection = active.worker.inspect()
+            except Exception as exc:
+                logger.exception("Unable to inspect calculation index=%s on %s.", active.index, active.server)
+                has_changes = self.__record_failure(active, str(exc)) or has_changes
+                continue
+
+            if inspection.state != active.state:
+                logger.info(
+                    "Calculation index=%s on %s changed state: %s -> %s.",
+                    active.index,
+                    active.server,
+                    active.state.value,
+                    inspection.state.value,
+                )
+                active.state = inspection.state
+                has_changes = True
+
+            if inspection.state == JobState.COMPLETED:
+                has_changes = self.__finalize_completed_calculation(active) or has_changes
+                continue
+
+            if inspection.state == JobState.FAILED:
+                message = inspection.message or "Calculation failed."
+                has_changes = self.__record_failure(active, message) or has_changes
+                continue
+
+            self.__store_state(active, inspection.state)
+
+        if has_changes:
+            self.__change_event.set()
+        return has_changes
+
     def __inspection_loop(self):
         """
             Polls all active calculations, finalizes completed jobs and runs parsers.
         """
         
         while not self.__stop_event.is_set():
-            with self.__state_lock:
-                active_snapshot = list(self.__active_calculations.values())
-
-            has_changes = False
-            for active in active_snapshot:
-                inspection = active.worker.inspect() # NOTE: awakes inspect method of the worker.
-                if inspection.state != active.state:
-                    active.state = inspection.state
-                    has_changes = True
-
-                if inspection.state != JobState.COMPLETED:
-                    if inspection.state == JobState.FAILED:
-                        with self.__state_lock:
-                            self.__data.at[active.index, "calculation_status"] = JobState.FAILED
-                            self.__active_calculations.pop(active.index, None)
-                            self.__errors.append((active.index, active.server, inspection.message or "Calculation failed."))
-                        has_changes = True
-                    continue # NOTE: continues for loop and inspects other active snapshots
-
-                try:
-                    calculation_info_dict, calculation_output = active.worker.finalize() # NOTE: awakes finalize method of the worker
-                    info = CalculationInfo(**calculation_info_dict)
-                except Exception as exc:
-                    with self.__state_lock:
-                        self.__data.at[active.index, "calculation_status"] = JobState.FAILED
-                        self.__active_calculations.pop(active.index, None)
-                        self.__errors.append((active.index, active.server, str(exc)))
-                    has_changes = True
-                    continue
-
-                with self.__state_lock:
-                    self.__data.at[active.index, "calculation_info"] = info
-                    self.__data.at[active.index, "calculation_output"] = calculation_output
-                    self.__data.at[active.index, "calculation_status"] = JobState.COMPLETED
-                    self.__active_calculations.pop(active.index, None)
-                has_changes = True
-
-            if has_changes:
-                self.__change_event.set()
+            self.__synchronize_active_calculations()
             self.__stop_event.wait(self.INSPECTOR_INTERVAL_SECONDS)
 
     def __raise_if_errors(self):
@@ -471,9 +557,12 @@ class Calculator:
             active_snapshot = list(self.__active_calculations.values())
         for active in active_snapshot:
             try:
-                active.worker.cancel()
+                if active.worker.cancel():
+                    logger.warning("Cancelled active calculation index=%s on %s.", active.index, active.server)
             except Exception:
+                logger.exception("Unable to cancel calculation index=%s on %s.", active.index, active.server)
                 continue
+            self.__data.at[active.index, "calculation_status"] = JobState.FAILED
 
     def __active_mpi_counts(self) -> dict[str, int]:
         """
@@ -527,7 +616,7 @@ class Calculator:
             index = self.__priority_pending_indices.popleft()
             if index in seen:
                 continue
-            if self.__data.at[index, "calculation_status"] in (JobState.FAILED, JobState.PENDING):
+            if self.__data.at[index, "calculation_status"] == JobState.PENDING:
                 ordered.append(index)
                 seen.add(index)
 
@@ -573,6 +662,7 @@ class Calculator:
         cif_data = self.__remove_fictive_atoms(self.__data.at[index, "cif_data"])
         connection = self.__build_slot_connection(server)
         worker = self.__build_worker(server, index, cif_data, connection)
+        logger.info("Launching calculation index=%s on %s.", index, server)
         info = worker.start()
         active = ActiveCalculation(
             index=index,
@@ -584,6 +674,7 @@ class Calculator:
             self.__active_calculations[index] = active
             self.__data.at[index, "calculation_status"] = JobState.RUNNING
             self.__data.at[index, "calculation_info"] = CalculationInfo(**info)
+        logger.debug("Calculation index=%s on %s started with info=%s.", index, server, info)
 
     def __server_sort_key(self, server: str) -> tuple[int, int, str]:
         """
@@ -673,6 +764,7 @@ class Calculator:
             Method representing loop of the calculator run.
         """
         
+        interrupted = False
         try:
             while True:
                 self.__raise_if_errors()
@@ -686,10 +778,24 @@ class Calculator:
                         break
                 self.__change_event.wait(self.REPLAN_WAIT_SECONDS)
                 self.__change_event.clear()
+        except KeyboardInterrupt:
+            interrupted = True
+            logger.warning("Calculator run was interrupted by user. Synchronizing completed calculations before exit.")
+            raise
         finally:
             self.__stop_event.set()
-            self.__inspector.join(timeout=self.INSPECTOR_INTERVAL_SECONDS + 1)
-            if self.__errors:
+            if self.__inspector is not None and not interrupted:
+                self.__inspector.join(timeout=self.INSPECTOR_INTERVAL_SECONDS + 1)
+            elif self.__inspector is not None and interrupted:
+                logger.warning("Skipping wait for inspector thread because the run was interrupted by user.")
+            if interrupted:
+                try:
+                    self.__synchronize_active_calculations()
+                except KeyboardInterrupt:
+                    logger.warning("Synchronization of completed calculations was interrupted again by user.")
+            else:
+                self.__synchronize_active_calculations()
+            if self.__errors and not interrupted:
                 self.__cancel_active_calculations()
 
         self.__raise_if_errors()
@@ -708,6 +814,7 @@ class Calculator:
         os.makedirs(self.__local_path, exist_ok=True)
         if self.__use_local:
             os.makedirs(self.__remote_path, exist_ok=True)
+        logger.info("Calculator run started. Structures=%d, nonblocking=%s.", len(self.__data), nonblocking)
 
         if self.__server_configs:
             self._connect()
@@ -716,6 +823,7 @@ class Calculator:
         self.__workers_distribution = self.__scheduler()
         if sum(self.__workers_distribution.values()) <= 0:
             raise CalculatorError("No available workers were detected for the current set of resources.")
+        logger.info("Initial workers distribution: %s", self.__workers_distribution)
 
         self.__stop_event.clear()
         self.__change_event.clear()
@@ -731,7 +839,9 @@ class Calculator:
         else:
             self.__looper = threading.Thread(target=self.__loop, name="csslib-calculator-looper", daemon=True)
             self.__looper.start()
+            logger.info("Calculator loop is started in nonblocking mode.")
         
+        logger.info("Calculator run finished.")
         return self.__data
 
 

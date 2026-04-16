@@ -11,7 +11,10 @@ import os
 import subprocess
 
 from csslib.exceptions import RemoteConnectionError, SchedulerError
+from csslib.logging_ import get_tools_logger
 from csslib.tools.calculations.cmd import MPI, SLURM
+
+logger = get_tools_logger("calculations.scheduler")
 
 
 class Scheduler:
@@ -42,6 +45,12 @@ class Scheduler:
         self.__connections = {}
 
         self.__parse_cmd()
+        logger.debug(
+            "Scheduler initialized: structures=%d, use_local=%s, max_workers=%s.",
+            self.__structures_number,
+            self.__use_local,
+            self.__max_workers,
+        )
 
     @staticmethod
     def __run_local(command: str) -> tuple[str, str, int]:
@@ -56,6 +65,7 @@ class Scheduler:
         """
         
         result = subprocess.run(command, capture_output=True, text=True, shell=True)
+        logger.debug("Local scheduler command `%s` finished with returncode=%s.", command, result.returncode)
         return result.stdout.strip(), result.stderr.strip(), result.returncode
 
     def __run_remote(self, server: str, command: str) -> tuple[str, str, int]:
@@ -82,7 +92,9 @@ class Scheduler:
             raise RemoteConnectionError(message) from exc
         stdout_text = stdout.read().decode("utf-8", errors="ignore").strip()
         stderr_text = stderr.read().decode("utf-8", errors="ignore").strip()
-        return stdout_text, stderr_text, stdout.channel.recv_exit_status()
+        returncode = stdout.channel.recv_exit_status()
+        logger.debug("Remote scheduler command on %s `%s` finished with returncode=%s.", server, command, returncode)
+        return stdout_text, stderr_text, returncode
 
     def __run_command(self, server: str, command: str) -> tuple[str, str, int]:
         """
@@ -179,6 +191,7 @@ class Scheduler:
                 csslib.exceptions.SchedulerError: if at least one loaded server has not contain the SLURM system, but the cmd command for the SLURM system was passed.
         """
         self.__connections = connections or {}
+        logger.info("Scheduler loaded %d remote connection(s).", len(self.__connections))
         for server, connection in self.__connections.items():
             if connection.has_slurm != isinstance(self.__get_cmd(server), SLURM):
                 message = "Mismatch between the cmd and connection is found. "
@@ -195,6 +208,7 @@ class Scheduler:
         """
         
         command = self.__get_cmd(server).prefix
+        logger.debug("Checking MPI command `%s` on %s.", command, server)
         if server == "local":
             probe_command = f"where.exe {command}" if os.name == "nt" else f"command -v {command}"
             _, _, returncode = self.__run_local(probe_command)
@@ -218,8 +232,10 @@ class Scheduler:
         stdout, stderr, returncode = self.__run_command(server, command)
         accounting_storage_none = "accounting_storage/none" in stdout or "accounting_storage/none" in stderr
         if accounting_storage_none:
+            logger.debug("SLURM accounting_storage/none mode was detected on %s.", server)
             return {}, True
         if returncode != 0 or not stdout:
+            logger.debug("Unable to obtain SLURM limits on %s. returncode=%s.", server, returncode)
             return {}, False
         return self.__parse_slurm_limits(stdout), False
 
@@ -264,6 +280,13 @@ class Scheduler:
                     continue
                 available_nodes += 1
 
+        logger.debug(
+            "Partition resources on %s/%s: idle_cpus=%s, available_nodes=%s.",
+            server,
+            partition,
+            idle_cpus if has_cpu_data else None,
+            available_nodes,
+        )
         return (idle_cpus if has_cpu_data else None), available_nodes
 
     def __get_username(self, server: str) -> str:
@@ -343,7 +366,9 @@ class Scheduler:
                 candidates.append(max(available_by_nodes, 0))
             if not candidates:
                 return Scheduler.SLURM_ACCOUNTING_NONE_MAX_SUBMIT
-            return max(min(candidates), 0)
+            available_workers = max(min(candidates), 0)
+            logger.info("Estimated %d SLURM workers for %s in accounting_storage/none mode.", available_workers, server)
+            return available_workers
 
         active_jobs = self.__get_active_slurm_jobs(server, partition)
         available_by_submit = max(max_submit - active_jobs, 0)
@@ -358,7 +383,9 @@ class Scheduler:
             candidates.append(max(available_by_nodes, 0))
         if not candidates:
             candidates.append(available_by_submit)
-        return max(min(candidates), 0)
+        available_workers = max(min(candidates), 0)
+        logger.info("Estimated %d SLURM workers for %s.", available_workers, server)
+        return available_workers
 
     @staticmethod
     def __uniform_reduce(workers: dict, remain_workers_to_remove: int) -> tuple[int, dict]:
@@ -476,6 +503,7 @@ class Scheduler:
                 available_resources[server] = int(stdout.strip())
 
         self.__limit_workers_by_resources(available_resources)
+        logger.info("Scheduler distribution: %s.", self.__workers)
         return self.__workers
 
     def __call__(self, connections: dict | None = None):
