@@ -90,6 +90,7 @@ class _BaseWorker:
         self._pid = None
         self._process = None
         self._last_state = JobState.UNKNOWN
+        self._calculation_exists = False
         self._stderr_cache = None
         self._unknown_slurm_polls = 0
         self._exitcode_filename = ".csslib.exitcode"
@@ -325,6 +326,16 @@ class _BaseWorker:
         
         return self._stderr_cache or "Calculation failed."
 
+    def _check_calculation(self) -> bool:
+        """
+            Checks if calculation has been done earlier.
+
+            Return:
+                bool: True if calculation is completed.  
+        """
+
+        return NotImplementedError
+
     def start(self) -> dict:
         """
             Prepares the workspace and starts the calculation in non-blocking mode.
@@ -334,11 +345,15 @@ class _BaseWorker:
         """
         
         logger.debug("Preparing worker workspace for %s.", self._calculation_name)
-        self._prepare_workspace()
-        self._prepare_inputs()
-        self._launch_nonblocking()
-        self._started = True
-        logger.info("Worker %s is started.", self._calculation_name)
+        if not self._check_calculation():
+            self._prepare_workspace()
+            self._prepare_inputs()
+            self._launch_nonblocking()
+            self._started = True
+            logger.info("Worker %s is started.", self._calculation_name)
+        else:
+            self._calculation_exists = True
+            logger.info("Worker %s detected previous calculation.", self._calculation_name)
         return self.get_calculation_info()
 
     def inspect(self) -> JobInspection:
@@ -348,6 +363,9 @@ class _BaseWorker:
             Return:
                 JobInspection: current state of the started calculation.
         """
+        if self._calculation_exists:
+            return JobInspection(JobState.COMPLETED, "Calculation has already done.")
+
         if not self._started:
             return JobInspection(JobState.UNKNOWN, "Calculation was not started.")
         inspection = self._inspect_slurm_job() if isinstance(self._cmd, SLURM) else self._inspect_process_job()
@@ -371,7 +389,12 @@ class _BaseWorker:
         logger.info("Collecting outputs for worker %s.", self._calculation_name)
         self._collect_outputs()
         logger.info("Parsing outputs for worker %s from %s.", self._calculation_name, self._local_result_path)
-        calculation_output = self._parser(self._local_result_path)
+        try:
+            calculation_output = self._parser(self._local_result_path)
+        except:
+            if self._calculation_exists:
+                logger.error("Parser failed when read output files at the worker %s. Check this directory or set force flag in the run() method to True.", self._calculation_name)
+            raise
         logger.info("Worker %s is finalized successfully.", self._calculation_name)
         return self.get_calculation_info(), calculation_output
 
@@ -618,6 +641,16 @@ class Worker(_BaseWorker):
         
         os.makedirs(self._work_path, exist_ok=True)
         os.makedirs(self._local_result_path, exist_ok=True)
+
+    def _check_calculation(self) -> bool:
+        """
+            Checks if calculation has been done earlier.
+
+            Return:
+                bool: True if calculation is completed.  
+        """
+
+        return os.path.exists(self._stdout_path)
 
     def _launch_nonblocking(self):
         """
@@ -937,6 +970,16 @@ class RemoteWorker(_BaseWorker):
         
         os.makedirs(self._staging_path, exist_ok=True)
         os.makedirs(self._local_result_path, exist_ok=True)
+
+    def _check_calculation(self) -> bool:
+        """
+            Checks if calculation has been done earlier.
+
+            Return:
+                bool: True if calculation is completed.  
+        """
+
+        return bool(self._exec_remote("cd {shlex.quote(self._remote_path)}", login_shell=True, interactive_shell=False, allocate_pty=False)[1])
 
     def _exec_remote(
         self,

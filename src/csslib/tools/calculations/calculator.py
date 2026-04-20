@@ -295,15 +295,19 @@ class Calculator:
         if isinstance(self.__cmd, dict) and self.__use_local and "local" not in self.__cmd:
             raise CalculatorError("Local cmd must exist when use_local is True.")
 
-    def _prepare_dataset(self):
+    def _prepare_dataset(self, force: bool = False):
         """
             Adds calculation status, metadata and parsed output columns to the dataset when they are missing.
+
+            Args:
+                force (bool, optional): starts calculations with JobState.RUNNING and JobState.UNKNOWN. Defaults to False.
         """
         
         if "calculation_status" not in self.__data.columns:
             self.__data["calculation_status"] = [JobState.PENDING for _ in range(len(self.__data))]
         else:
-            self.__data["calculation_status"][self.__data["calculation_status"] == JobState.FAILED] = JobState.PENDING
+            self.__data["calculation_status"][self.__data["calculation_status"] in (JobState.FAILED, JobState.CANCELLED)] = JobState.PENDING
+            self.__data["calculation_status"][self.__data["calculation_status"] in (JobState.RUNNING, JobState.UNKNOWN)] = JobState.UNKNOWN if not force else JobState.PENDING
         if "calculation_info" not in self.__data.columns:
             self.__data["calculation_info"] = [CalculationInfo() for _ in range(len(self.__data))]
         if "calculation_output" not in self.__data.columns:
@@ -800,17 +804,18 @@ class Calculator:
 
         self.__raise_if_errors()
 
-    def run(self, nonblocking: bool = False): # TODO: if calculation was started, then we need to check calculation before it will be restarted. Also we can add parse method after each calculation.
+    def run(self, /, nonblocking: bool = False, force: bool = False):
         """
             Starts the calculation dispatch loop.
 
             Args:
                 nonblocking (bool, optional): starts calculator in the nonblocking mode. Defaults to False.
+                force (bool, optional): starts calculations with JobState.RUNNING and JobState.UNKNOWN. Defaults to False.
 
             Return:
                 DataLoader: updated DataLoader object with calculation statuses, metadata and parsed outputs.
         """
-        self._prepare_dataset()
+        self._prepare_dataset(force=force)
         os.makedirs(self.__local_path, exist_ok=True)
         if self.__use_local:
             os.makedirs(self.__remote_path, exist_ok=True)
