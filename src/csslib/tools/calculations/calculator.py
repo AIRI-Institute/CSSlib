@@ -22,7 +22,7 @@ from csslib.logging_ import get_tools_logger
 from csslib.tools.calculations.cmd import MPI, SLURM
 from csslib.tools.calculations.inputs import EspressoInputs, InputSet, VaspInputs
 from csslib.tools.calculations.parser import default_espresso_parser, default_vasp_parser
-from csslib.tools.calculations.remote import ConnectionStatus, RemoteConnection
+from csslib.tools.calculations.remote import ConnectionStatus, RemoteConfiguration, RemoteConnection
 from csslib.tools.calculations.scheduler import Scheduler
 from csslib.tools.calculations.worker import JobState, RemoteWorker, Worker
 from csslib.tools.dataloader import DataLoader
@@ -72,14 +72,8 @@ class Calculator:
         remote_path: str,
         local_path: str | None = None,
         loading_files: list[str] | None = None,
-        server_ip: str | list[str] | None = None,
-        port: int | list[int] = 22,
-        username: str | list[str] | None = None,
-        password: str | list[str] | None = None,
-        host_keys_path: str | None = None,
+        connection_config: RemoteConfiguration | list[RemoteConfiguration] | None = None,
         max_workers: int | list[int] | None = None,
-        max_connection_attempts: int = 5,
-        use_sftp: bool = False,
         use_local: bool = False,
         **dataloader_fields,
     ):
@@ -96,15 +90,9 @@ class Calculator:
                 Defaults to None.
                 loading_files (list[str] | None, optional): relative paths to files that should be copied after the calculation finishes.
                 Defaults to None.
-                server_ip (str | list[str] | None, optional): one server address or a list of remote server addresses. Defaults to None.
-                port (int | list[int], optional): SSH port or ports for remote connections. Defaults to 22.
-                username (str | list[str] | None, optional): remote username or usernames. Defaults to None.
-                password (str | list[str] | None, optional): remote password or passwords. Defaults to None.
-                host_keys_path (str | None, optional): path to known hosts file. Defaults to None.
+                connection_config (RemoteConfiguration | list[RemoteConfiguration] | None, optional): instance/instances of the RemoteConfiguration class. Should be used for remote connection setup. Defaults to None.
                 max_workers (int | list[int] | None, optional): maximal number of workers allowed on each resource. Defaults to None.
                 max_connection_attempts (int, optional): number of reconnection attempts for remote resources. Defaults to 5.
-                use_sftp (bool, optional): if True SFTP is used for file transfer instead of SCP. Defaults to False.
-                use_local (bool, optional): if True local machine is included into the scheduling pool. Defaults to False.
                 **dataloader_fields: extra keyword arguments forwarded to DataLoader when data is passed as a path.
 
             Raise:
@@ -118,15 +106,9 @@ class Calculator:
         self.__loading_files = loading_files
         self.__cmd = cmd
 
-        self.__host_keys_path = host_keys_path
-        self.__server_ip = server_ip
-        self.__port = port
-        self.__username = username
-        self.__password = password
+        self.__configurations = connection_config
         self.__max_workers = max_workers
-        self.__max_connection_attempts = max_connection_attempts
-        self.__use_sftp = use_sftp
-        self.__use_local = use_local or server_ip is None
+        self.__use_local = use_local or self.__configurations is None
 
         if self.__loading_files is None:
             raise CalculatorError("loading_files attribute must be non empty!")
@@ -158,7 +140,7 @@ class Calculator:
             "Calculator initialized: structures=%d, use_local=%s, remote_servers=%d, local_path=%s, remote_path=%s.",
             len(self.__data),
             self.__use_local,
-            len(self.__server_configs),
+            len(self.__configurations),
             self.__local_path,
             self.__remote_path,
         )
@@ -171,23 +153,15 @@ class Calculator:
                 CalculatorError: if remote servers were configured but none of the connections was established successfully.
         """
         self.__connections = {}
-        for server, config in self.__server_configs.items():
-            logger.info("Connecting to remote server %s as %s.", server, config["username"])
-            connection = RemoteConnection(
-                server,
-                config["port"],
-                config["username"],
-                config["password"],
-                self.__host_keys_path,
-                self.__max_connection_attempts,
-                self.__use_sftp,
-            )
+        for server_ip, config in self.__configurations.items():
+            logger.info("Connecting to remote server %s as %s.", server_ip, config.username)
+            connection = RemoteConnection(config)
             if connection.connection_status == ConnectionStatus.CONNECTED:
-                self.__connections[server] = connection
-                logger.info("Remote server %s is connected.", server)
+                self.__connections[server_ip] = connection
+                logger.info("Remote server %s is connected.", server_ip)
             else:
-                logger.warning("Remote server %s is unavailable and will be skipped.", server)
-        if self.__server_configs and not self.__connections:
+                logger.warning("Remote server %s is unavailable and will be skipped.", server_ip)
+        if self.__configurations is not None and not self.__connections:
             raise CalculatorError("No one connection was successful. Please verify your internet connection or connection settings.")
 
     def __validate_init_parameters(self):
@@ -197,38 +171,26 @@ class Calculator:
             Raise:
                 CalculatorError: if provided ports, usernames, passwords, commands or worker limits are inconsistent with server_ip.
         """
-        if self.__server_ip is None:
+        if self.__configurations is None:
             return
 
-        if isinstance(self.__server_ip, str):
-            if not isinstance(self.__port, int):
-                raise CalculatorError("Only one port should be written when one server_ip is passed.")
-            if not isinstance(self.__username, str):
-                raise CalculatorError("Only one username should be written when one server_ip is passed.")
-            if isinstance(self.__password, list):
-                raise CalculatorError("One password or nothing should be written when one server_ip is passed.")
+        if isinstance(self.__configurations, RemoteConfiguration):
             if isinstance(self.__max_workers, list) and len(self.__max_workers) not in ({1, 2} if self.__use_local else {1}):
                 raise CalculatorError("Max workers parameter should be int or a short list compatible with the selected resources.")
             if isinstance(self.__cmd, list) and len(self.__cmd) not in ({1, 2} if self.__use_local else {1}):
                 raise CalculatorError("Cmd command parameter should be str or a short list compatible with the selected resources.")
             return
 
-        if isinstance(self.__port, list) and len(self.__port) != len(self.__server_ip):
-            raise CalculatorError("Port should be int or list[int] with the size equal to the size of server_ip list.")
-        if not isinstance(self.__username, str) and (not isinstance(self.__username, list) or len(self.__username) != len(self.__server_ip)):
-            raise CalculatorError("Username should be str or list[str] with the size equal to the size of server_ip list.")
-        if isinstance(self.__password, list) and len(self.__password) != len(self.__server_ip):
-            raise CalculatorError("Password should be str, list[str] with the size equal to the size of server_ip list or None.")
         if isinstance(self.__max_workers, list):
-            valid_lengths = {len(self.__server_ip)}
+            valid_lengths = {len(self.__configurations)}
             if self.__use_local:
-                valid_lengths.add(len(self.__server_ip) + 1)
+                valid_lengths.add(len(self.__configurations) + 1)
             if len(self.__max_workers) not in valid_lengths:
                 raise CalculatorError("Max workers parameter should be int or list[int] with the size equal to the size of server_ip list.")
         if isinstance(self.__cmd, list):
-            valid_lengths = {len(self.__server_ip)}
+            valid_lengths = {len(self.__configurations)}
             if self.__use_local:
-                valid_lengths.add(len(self.__server_ip) + 1)
+                valid_lengths.add(len(self.__configurations) + 1)
             if len(self.__cmd) not in valid_lengths:
                 raise CalculatorError("Cmd command parameter should be str or list[str] with the size equal to the size of server_ip list.")
 
@@ -240,60 +202,33 @@ class Calculator:
                 CalculatorError: if local execution is requested but the corresponding local command or worker count is missing.
         """
         
-        self.__server_configs = {}
-        if self.__server_ip is None:
-            self.__server_ip = []
-            self.__username = []
-            self.__port = []
-            self.__password = []
-            if isinstance(self.__cmd, list):
-                if len(self.__cmd) != 1:
-                    raise CalculatorError("For local-only calculations cmd list should contain exactly one command.")
-                self.__cmd = self.__cmd[0]
-            if isinstance(self.__max_workers, list):
-                if len(self.__max_workers) != 1:
-                    raise CalculatorError("For local-only calculations max_workers list should contain exactly one value.")
-                self.__max_workers = self.__max_workers[0]
-            return
+        if self.__configurations is not None and not isinstance(self.__configurations, list):
+            self.__configurations = [self.__configurations]
+        if not isinstance(self.__cmd, list):
+            self.__cmd = [self.__cmd]
+        if not isinstance(self.__max_workers, list):
+            self.__max_workers = [self.__max_workers]
 
-        if isinstance(self.__server_ip, str):
-            self.__server_ip = [self.__server_ip]
-            self.__username = [self.__username]
-            self.__port = [self.__port]
-            self.__password = [self.__password]
-        else:
-            if isinstance(self.__username, str):
-                self.__username = [self.__username for _ in self.__server_ip]
-            if isinstance(self.__port, int):
-                self.__port = [self.__port for _ in self.__server_ip]
-            if self.__password is None or isinstance(self.__password, str):
-                self.__password = [self.__password for _ in self.__server_ip]
+        cmd_list = self.__cmd
+        remote_cmd = cmd_list[: len(self.__configurations)]
+        self.__cmd = {config.server_ip: remote_cmd[indx] for indx, config in enumerate(self.__configurations)}
+        if self.__use_local:
+            if len(cmd_list) <= len(self.__configurations) and len(self.__cmd) != 1:
+                raise CalculatorError("If use_local is True, then the last command must be associated with local machine.")
+            self.__cmd["local"] = cmd_list[-1]
 
-        self.__server_configs = {
-            server_ip: {"port": self.__port[indx], "username": self.__username[indx], "password": self.__password[indx]}
-            for indx, server_ip in enumerate(self.__server_ip)
+        max_workers_list = self.__max_workers
+        self.__max_workers = {
+            config.server_ip: max_workers_list[indx]
+            for indx, config in enumerate(self.__configurations)
         }
+        if self.__use_local and (len(max_workers_list) > len(self.__configurations) or len(max_workers_list) == 1):
+            self.__max_workers["local"] = max_workers_list[-1]
+        elif self.__use_local:
+            raise CalculatorError("If use_local is True, then the last max_workers parameter must be associated with local machine.")
 
-        if isinstance(self.__cmd, list):
-            cmd_list = self.__cmd
-            remote_cmd = cmd_list[: len(self.__server_ip)]
-            self.__cmd = {server_ip: remote_cmd[indx] for indx, server_ip in enumerate(self.__server_ip)}
-            if self.__use_local:
-                if len(cmd_list) == len(self.__server_ip):
-                    raise CalculatorError("If use_local is True and cmd is list, then the last command must be associated with local machine.")
-                self.__cmd["local"] = cmd_list[-1]
-
-        if isinstance(self.__max_workers, list):
-            max_workers_list = self.__max_workers
-            self.__max_workers = {
-                server_ip: max_workers_list[indx]
-                for indx, server_ip in enumerate(self.__server_ip)
-            }
-            if self.__use_local and len(max_workers_list) > len(self.__server_ip):
-                self.__max_workers["local"] = max_workers_list[-1]
-
-        if isinstance(self.__cmd, dict) and self.__use_local and "local" not in self.__cmd:
-            raise CalculatorError("Local cmd must exist when use_local is True.")
+        if self.__configurations is not None:
+            self.__configurations = {config.server_ip: config for config in self.__configurations}
 
     def _prepare_dataset(self, force: bool = False):
         """
@@ -306,8 +241,8 @@ class Calculator:
         if "calculation_status" not in self.__data.columns:
             self.__data["calculation_status"] = [JobState.PENDING for _ in range(len(self.__data))]
         else:
-            self.__data["calculation_status"][self.__data["calculation_status"] in (JobState.FAILED, JobState.CANCELLED)] = JobState.PENDING
-            self.__data["calculation_status"][self.__data["calculation_status"] in (JobState.RUNNING, JobState.UNKNOWN)] = JobState.UNKNOWN if not force else JobState.PENDING
+            self.__data["calculation_status"][(self.__data["calculation_status"] == JobState.FAILED) | (self.__data["calculation_status"] == JobState.CANCELLED)] = JobState.PENDING
+            self.__data["calculation_status"][(self.__data["calculation_status"] == JobState.RUNNING) | (self.__data["calculation_status"] == JobState.UNKNOWN)] = JobState.UNKNOWN if not force else JobState.PENDING
         if "calculation_info" not in self.__data.columns:
             self.__data["calculation_info"] = [CalculationInfo() for _ in range(len(self.__data))]
         if "calculation_output" not in self.__data.columns:
@@ -339,19 +274,6 @@ class Calculator:
         """
         return re.sub(r"[^0-9A-Za-z._-]+", "_", str(value))
 
-    def __get_cmd(self, server: str) -> str:
-        """
-            Returns the execution command associated with the selected server.
-
-            Args:
-                server (str): server name for which the launch command should be returned.
-
-            Return:
-                str: command string associated with the requested server.
-        """
-        
-        return self.__cmd if not isinstance(self.__cmd, dict) else self.__cmd[server]
-
     def __build_worker(self, server: str, index: Any, cif_data: Any, connection: RemoteConnection | None):
         """
             Builds a local or remote worker instance for one dataset row.
@@ -370,7 +292,7 @@ class Calculator:
         inputs = self.__clone_inputs()
         if server == "local":
             return Worker(
-                cmd=self.__get_cmd("local") if isinstance(self.__cmd, dict) else self.__get_cmd(server),
+                cmd=self.__cmd["local"],
                 inputs=inputs,
                 parser=self.__parser,
                 structure=cif_data,
@@ -385,8 +307,8 @@ class Calculator:
             file_sharing=connection()["SFTP/SCP"],
             connection_owner=connection,
             server_ip=server,
-            username=self.__server_configs[server]["username"],
-            cmd=self.__get_cmd(server),
+            username=self.__configurations[server].username,
+            cmd=self.__cmd[server],
             inputs=inputs,
             parser=self.__parser,
             structure=cif_data,
@@ -411,16 +333,8 @@ class Calculator:
         """
         if server == "local":
             return None
-        config = self.__server_configs[server]
-        connection = RemoteConnection(
-            server,
-            config["port"],
-            config["username"],
-            config["password"],
-            self.__host_keys_path,
-            self.__max_connection_attempts,
-            self.__use_sftp,
-        )
+        config = self.__configurations[server]
+        connection = RemoteConnection(config)
         if connection.connection_status != ConnectionStatus.CONNECTED:
             raise CalculatorError(f"Unable to create worker connection for server {server}.")
         return connection
@@ -598,7 +512,7 @@ class Calculator:
         active_mpi = self.__active_mpi_counts()
         launch_slots = {}
         for server, desired_workers in desired_distribution.items():
-            if isinstance(self.__get_cmd(server), SLURM):
+            if isinstance(self.__cmd[server], SLURM):
                 slots = max(desired_workers, 0)
             else:
                 slots = max(desired_workers - active_mpi.get(server, 0), 0)
@@ -672,7 +586,7 @@ class Calculator:
             index=index,
             server=server,
             worker=worker,
-            state=JobState.PENDING if isinstance(self.__get_cmd(server), SLURM) else JobState.RUNNING,
+            state=JobState.PENDING if isinstance(self.__cmd[server], SLURM) else JobState.RUNNING,
         )
         with self.__state_lock:
             self.__active_calculations[index] = active
@@ -691,7 +605,7 @@ class Calculator:
                 tuple[int, int, str]: tuple used for stable dispatch ordering between MPI and SLURM resources.
         """
         
-        cmd = self.__get_cmd(server)
+        cmd = self.__cmd[server]
         return (0 if isinstance(cmd, MPI) else 1, -cmd.cores_number if isinstance(cmd, MPI) else -cmd.ntasks * cmd.cpu_per_task, str(server))
 
     def __migrate_pending_slurm_to_mpi(self, launch_slots: dict[str, int]) -> bool:
@@ -705,7 +619,7 @@ class Calculator:
             bool: True if at least one pending SLURM job was cancelled and returned to the pending queue.
         """
         
-        mpi_free_slots = sum(slots for server, slots in launch_slots.items() if isinstance(self.__get_cmd(server), MPI))
+        mpi_free_slots = sum(slots for server, slots in launch_slots.items() if isinstance(self.__cmd[server], MPI))
         if mpi_free_slots <= 0:
             return False
 
@@ -821,7 +735,7 @@ class Calculator:
             os.makedirs(self.__remote_path, exist_ok=True)
         logger.info("Calculator run started. Structures=%d, nonblocking=%s.", len(self.__data), nonblocking)
 
-        if self.__server_configs:
+        if self.__configurations is not None:
             self._connect()
             self.__scheduler.load_connections(self.__connections)
 
@@ -871,6 +785,7 @@ class VaspCalculator(Calculator):
         potcar_dir: str | os.PathLike | None = None,
         potcar_map: dict[str, str] | None = None,
         assemble_potcar: bool = False,
+        connection_config: RemoteConfiguration | list[RemoteConfiguration] | None = None,
         **kwargs,
     ):
         """
@@ -889,6 +804,7 @@ class VaspCalculator(Calculator):
                 potcar_dir (str | os.PathLike | None, optional): directory with POTCAR fragments. Defaults to None.
                 potcar_map (dict[str, str] | None, optional): mapping from element symbols to POTCAR fragment names. Defaults to None.
                 assemble_potcar (bool, optional): if True POTCAR is assembled dynamically for each structure. Defaults to False.
+                connection_config (RemoteConfiguration | list[RemoteConfiguration] | None, optional): instance/instances of the RemoteConfiguration class. Should be used for remote connection setup. Defaults to None.
                 **kwargs: additional keyword arguments forwarded to Calculator.
         """
         
@@ -907,6 +823,7 @@ class VaspCalculator(Calculator):
             remote_path=remote_path,
             local_path=local_path,
             loading_files=loading_files or self.DEFAULT_LOADING_FILES,
+            connection_config=connection_config,
             **kwargs,
         )
 
@@ -941,6 +858,7 @@ class EspressoCalculator(Calculator):
         use_primitive: bool = False,
         symprec: float = 1e-3,
         pwxml_kwargs: dict[str, Any] | None = None,
+        connection_config: RemoteConfiguration | list[RemoteConfiguration] | None = None,
         **kwargs,
     ):
         """
@@ -968,6 +886,7 @@ class EspressoCalculator(Calculator):
                 use_primitive (bool, optional): if True primitive standardized structure is used. Defaults to False.
                 symprec (float, optional): tolerance used during symmetry analysis. Defaults to 1e-3.
                 pwxml_kwargs (dict[str, Any] | None, optional): keyword arguments forwarded to PWxml parser. Defaults to None.
+                connection_config (RemoteConfiguration | list[RemoteConfiguration] | None, optional): instance/instances of the RemoteConfiguration class. Should be used for remote connection setup. Defaults to None.
                 **kwargs: additional keyword arguments forwarded to Calculator.
         """
         inputs_object = inputs if inputs is not None else EspressoInputs(
