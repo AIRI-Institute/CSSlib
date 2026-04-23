@@ -123,6 +123,7 @@ class Calculator:
             self.__local_path = os.path.join(self.__data.base_path, "css_calculated")
 
         self.__connections = {}
+        self.__single_mode = True
         self.__scheduler = Scheduler(cmd=self.__cmd, structures_number=len(self.__data), max_workers=self.__max_workers, use_local=self.__use_local)
         self.__workers_distribution = {}
 
@@ -320,7 +321,7 @@ class Calculator:
 
     def __build_slot_connection(self, server: str) -> RemoteConnection | None:
         """
-            Creates a dedicated remote connection for a worker slot when remote execution is used.
+            Creates a dedicated remote connection for a worker slot when remote execution is used or returns already created connection if single_mode attribute is True.
 
             Args:
                 server (str): target server name for which a dedicated worker connection should be created.
@@ -333,6 +334,9 @@ class Calculator:
         """
         if server == "local":
             return None
+        elif self.__single_mode:
+            return self.__connections[server]
+
         config = self.__configurations[server]
         connection = RemoteConnection(config)
         if connection.connection_status != ConnectionStatus.CONNECTED:
@@ -718,17 +722,19 @@ class Calculator:
 
         self.__raise_if_errors()
 
-    def run(self, /, nonblocking: bool = False, force: bool = False):
+    def run(self, /, nonblocking: bool = False, force: bool = False, one_connection_per_server: bool = True):
         """
             Starts the calculation dispatch loop.
 
             Args:
                 nonblocking (bool, optional): starts calculator in the nonblocking mode. Defaults to False.
                 force (bool, optional): starts calculations with JobState.RUNNING and JobState.UNKNOWN. Defaults to False.
+                one_connection_per_server (bool, optional): use only one SSHClient and filesharing object per server. SLOWER BUT MORE STABLE. Defaults to True.
 
             Return:
                 DataLoader: updated DataLoader object with calculation statuses, metadata and parsed outputs.
         """
+        self.__single_mode = one_connection_per_server
         self._prepare_dataset(force=force)
         os.makedirs(self.__local_path, exist_ok=True)
         if self.__use_local:
@@ -786,6 +792,7 @@ class VaspCalculator(Calculator):
         potcar_map: dict[str, str] | None = None,
         assemble_potcar: bool = False,
         connection_config: RemoteConfiguration | list[RemoteConfiguration] | None = None,
+        use_local: bool = False,
         **kwargs,
     ):
         """
@@ -805,6 +812,7 @@ class VaspCalculator(Calculator):
                 potcar_map (dict[str, str] | None, optional): mapping from element symbols to POTCAR fragment names. Defaults to None.
                 assemble_potcar (bool, optional): if True POTCAR is assembled dynamically for each structure. Defaults to False.
                 connection_config (RemoteConfiguration | list[RemoteConfiguration] | None, optional): instance/instances of the RemoteConfiguration class. Should be used for remote connection setup. Defaults to None.
+                use_local (bool, optional): use the local computer for calculations. Defaults to False.
                 **kwargs: additional keyword arguments forwarded to Calculator.
         """
         
@@ -824,6 +832,7 @@ class VaspCalculator(Calculator):
             local_path=local_path,
             loading_files=loading_files or self.DEFAULT_LOADING_FILES,
             connection_config=connection_config,
+            use_local=use_local,
             **kwargs,
         )
 
@@ -859,6 +868,7 @@ class EspressoCalculator(Calculator):
         symprec: float = 1e-3,
         pwxml_kwargs: dict[str, Any] | None = None,
         connection_config: RemoteConfiguration | list[RemoteConfiguration] | None = None,
+        use_local: bool = False,
         **kwargs,
     ):
         """
@@ -887,6 +897,7 @@ class EspressoCalculator(Calculator):
                 symprec (float, optional): tolerance used during symmetry analysis. Defaults to 1e-3.
                 pwxml_kwargs (dict[str, Any] | None, optional): keyword arguments forwarded to PWxml parser. Defaults to None.
                 connection_config (RemoteConfiguration | list[RemoteConfiguration] | None, optional): instance/instances of the RemoteConfiguration class. Should be used for remote connection setup. Defaults to None.
+                use_local (bool, optional): use the local computer for calculations. Defaults to False.
                 **kwargs: additional keyword arguments forwarded to Calculator.
         """
         inputs_object = inputs if inputs is not None else EspressoInputs(
@@ -912,5 +923,7 @@ class EspressoCalculator(Calculator):
             remote_path=remote_path,
             local_path=local_path,
             loading_files=loading_files or self.DEFAULT_LOADING_FILES,
+            connection_config=connection_config,
+            use_local=use_local,
             **kwargs,
         )

@@ -23,20 +23,20 @@ class Scheduler:
     SLURM_ACCOUNTING_NONE_MAX_SUBMIT = 9999
     SLURM_UNAVAILABLE_NODE_STATES = ("down", "drain", "drng", "fail", "maint", "resv")
 
-    def __init__(self, cmd: MPI | SLURM | dict, structures_number: int, max_workers: int | dict | None = None, use_local: bool = False):
+    def __init__(self, cmd: MPI | SLURM | dict, structures_number: int, max_workers: dict, use_local: bool = False):
         """
             Initialization method for the Scheduler class.
 
             Args:
                 cmd (MPI | SLURM | dict): cmd command object/objects which will be parsed by Scheduler for the resources distribution.
                 structures_number (int): number of structures to calculate.
-                max_workers (int | dict | None): maximal number of workers on the local machine or server/servers. If None then max_workers
+                max_workers (int): maximal number of workers on the local machine or server/servers. If None will be observed then max_workers
                 will be set to structures_number.
                 use_local (bool, optional): if True the local machine will be used for calculations else only remote servers will be used. Defaults to False.
         """
         self.__cmd = cmd
         self.__structures_number = structures_number
-        self.__max_workers = max_workers if max_workers is not None else self.__structures_number
+        self.__max_workers = {workers if workers is not None else self.__structures_number for workers in max_workers}
         self.__use_local = use_local
         self.__local_has_slurm = False
 

@@ -975,7 +975,7 @@ class RemoteWorker(_BaseWorker):
                 bool: True if calculation is completed.  
         """
 
-        return bool(self._exec_remote("cd {shlex.quote(self._remote_path)}", login_shell=True, interactive_shell=False, allocate_pty=False)[1])
+        return not bool(self._exec_remote(f"cd {shlex.quote(self._remote_path)}", login_shell=True, interactive_shell=False, allocate_pty=False)[1])
 
     def _exec_remote(
         self,
