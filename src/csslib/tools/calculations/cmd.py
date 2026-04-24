@@ -124,7 +124,7 @@ class SLURM:
             raise ConfigurationError("binary attribute should be filled.")
         
         if self.ntasks is None and self.cpu_per_task is not None:
-            self.ntasks = 1
+            raise ConfigurationError("Ntasks or cpu_per_task parameter must be nonempty.")
         elif self.ntasks is not None and self.cpu_per_task is None:
             self.cpu_per_task = 1
         
@@ -195,12 +195,3 @@ class SLURM:
             script += "printf '%s' \"$status\" > .csslib.exitcode\n"
             script += "exit \"$status\""
         return script
-    
-    
-"""
-#NOTE:
-            'if [ -f /etc/profile ]; then . /etc/profile; fi',
-            'if [ -f /etc/profile.d/modules.sh ]; then . /etc/profile.d/modules.sh; fi',
-            'if [ -f ~/.bash_profile ]; then . ~/.bash_profile; elif [ -f ~/.bash_login ]; then . ~/.bash_login; elif [ -f ~/.profile ]; then . ~/.profile; fi',
-            'if [ -f ~/.bashrc ]; then . ~/.bashrc; fi',
-"""

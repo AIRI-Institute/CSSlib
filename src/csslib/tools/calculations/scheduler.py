@@ -323,7 +323,7 @@ class Scheduler:
             return 0
         return len([line for line in stdout.splitlines() if line.strip()])
 
-    def __check_slurm(self, server: str) -> int: #NOTE: check from here
+    def __check_slurm(self, server: str) -> int:
         """
             Checks SLURM system limits and estimates the number of jobs that can be started now.
 
@@ -336,8 +336,6 @@ class Scheduler:
         partition = self.__get_cmd(server).partition
         nodes_number = self.__get_cmd(server).nodes
         job_cores = self.__cores[server] if isinstance(self.__cores, dict) else self.__cores
-        
-        job_cores = 1 if job_cores is None else job_cores # NOTE: if SLURM.ntasks is None and SLURM.cpus_per_task is None than program behaviour can be incorrect.
 
         limits_table, accounting_storage_none = self.__get_slurm_limits(server)
         partition_limits = limits_table.get(partition, {})
@@ -367,7 +365,10 @@ class Scheduler:
             if not candidates:
                 return Scheduler.SLURM_ACCOUNTING_NONE_MAX_SUBMIT
             available_workers = max(min(candidates), 0)
-            logger.info("Estimated %d SLURM workers for %s in accounting_storage/none mode.", available_workers, server)
+            logger.info("Estimated %d active SLURM workers for %s in accounting_storage/none mode.", available_workers, server)
+            if not available_workers:
+                available_workers = Scheduler.SLURM_ACCOUNTING_NONE_MAX_SUBMIT if Scheduler.SLURM_ACCOUNTING_NONE_MAX_SUBMIT < self.__structures_number else self.__structures_number
+                logger.info("Setting up %s workers according to maximal submit opportunities.", available_workers)
             return available_workers
 
         active_jobs = self.__get_active_slurm_jobs(server, partition)
@@ -384,7 +385,10 @@ class Scheduler:
         if not candidates:
             candidates.append(available_by_submit)
         available_workers = max(min(candidates), 0)
-        logger.info("Estimated %d SLURM workers for %s.", available_workers, server)
+        logger.info("Estimated %d active SLURM workers for %s.", available_workers, server)
+        if not available_workers:
+            available_workers = Scheduler.SLURM_ACCOUNTING_NONE_MAX_SUBMIT if Scheduler.SLURM_ACCOUNTING_NONE_MAX_SUBMIT < self.__structures_number else self.__structures_number
+            logger.info("Setting up %s workers according to maximal submit opportunities.", available_workers)
         return available_workers
 
     @staticmethod
