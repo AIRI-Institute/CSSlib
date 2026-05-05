@@ -39,7 +39,3 @@ espresso = [
 all = [
     "csslib[espresso]"
 ]
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["csslib*", "tests*" ]
