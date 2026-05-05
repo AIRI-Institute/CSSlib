@@ -1,6 +1,6 @@
 [project]
 name = "csslib"
-version = "1.2"
+version = "1.2.1"
 authors = [
   { name="A.V. Krautsou" },
   { name="A.A. Solovykh" },

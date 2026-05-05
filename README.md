@@ -2,7 +2,7 @@
 ![License](https://img.shields.io/github/license/AIRI-Institute/CSSlib?style=flat&logo=opensourceinitiative&logoColor=white&color=blue) ![Version](https://img.shields.io/badge/version-1.2-orange.svg?cacheSeconds=2592000)
 
 <p align="center">
-  <img src="./logo.jpg" onerror="this.onerror=null; this.src='https://github.com/AIRI-Institute/CSSlib/blob/main/logo.jpg';" width="30%" title="CSSlib" alt="CSSlib"/>
+  <img src="./logo.jpg" onerror="this.onerror=null; this.src='https://raw.githubusercontent.com/AIRI-Institute/CSSlib/refs/heads/main/logo.jpg';" width="30%" title="CSSlib" alt="CSSlib"/>
 </p>
 
 CSSlib is an open-source code for building configuration search space (CSS) of disordered crystals, loading of the CSS dataset obtained, local/remote MPI or SLURM calculations and data visualization.
