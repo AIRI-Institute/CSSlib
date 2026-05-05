@@ -7,13 +7,13 @@
 
 CSSlib is an open-source code for building configuration search space (CSS) of disordered crystals, loading of the CSS dataset obtained, local/remote MPI or SLURM calculations and data visualization.
 
-## Table of content
+## Table of content 📋
 - [Installation](#installation)
 - [Contributors](#contributors)
 - [Tutorial](#tutorial)
 - [References & Citing](#references--citing)
 
-## Installation
+## Installation 🛠️
 **CSSlib** can be installed through 
 1) the **pip** package manager (in the virtual environment):
 ```sh
@@ -43,14 +43,14 @@ or
 uv sync --group espresso
 ```
 
-## Contributors
+## Contributors 👨‍💻
 - Aleksey Krautsou
 - Aleksandr Solovykh
 
-## Tutorial
+## Tutorial ℹ️
 The best way to learn how to use **CSSlib** is through the tutorial notebook located at the [tests directory](tests/csslib_example.ipynb) or at the [google collab](https://colab.research.google.com/drive/1OzYe7QXuL-BYXROnEh7hvuIW08xGlZO2?usp=sharing).
 
-## References & Citing
+## References & Citing 📢
 If you use this code, please consider citing works that actively used the CSS approach, which resulted in the creation of this library:
 
 1. A.V. Krautsou, I.S. Humonen, V.D. Lazarev, R.A. Eremin, S.A. Budennyy<br/>
