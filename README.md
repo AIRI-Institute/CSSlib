@@ -34,13 +34,13 @@ uv pip install csslib
 
 **CSSlib** by default requires **Supercell** program. Details on **Supercell** installation can be found at the corresponding [website](https://orex.github.io/supercell/download/).
 
-As a calculator for quantum mechanical calculations, **CSSlib** assumes the use of the [VASP](https://www.vasp.at/) (Vienna Ab initio Simulation Package) software package. Also there is an optional dependency for the [QuantumEspresso](http://www.quantum-espresso.org) simulation package which can be installed as:
+As a calculator for quantum mechanical calculations, **CSSlib** assumes the use of the [VASP](https://www.vasp.at/) (Vienna Ab initio Simulation Package) software package. Also there is an optional dependency for the [QuantumEspresso](http://www.quantum-espresso.org) simulation package which can be installed after the normal installation as:
 ```sh
-pip install csslib[espresso]
+pip install --group espresso .
 ```
 or 
 ```sh
-pip install csslib[all]
+uv sync --group espresso
 ```
 
 ## Contributors
