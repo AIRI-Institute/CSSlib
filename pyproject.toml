@@ -1,6 +1,6 @@
 [project]
 name = "csslib"
-version = "1.2"
+version = "1.2.3"
 authors = [
   { name="A.V. Krautsou" },
   { name="A.A. Solovykh" },
@@ -25,17 +25,17 @@ dependencies = [
     "scipy >=1.15.3, <1.17.1",
     "scp >= 0.15.0",
     "tqdm >=4.67.1, <= 4.67.3",
-    "networkx >=3.4.2, <= 3.6.1"
+    "networkx >=3.4.2, <= 3.6.1",
 ]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[project.optional-dependencies]
+[dependency-groups]
 espresso = [
-    "pymatgen-io-espresso @ git+https://github.com/Griffin-Group/pymatgen-io-espresso"
+    "pymatgen-io-espresso @ git+https://github.com/Griffin-Group/pymatgen-io-espresso",
 ]
 all = [
-    "csslib[espresso]"
+    {include-group = "espresso"},
 ]
