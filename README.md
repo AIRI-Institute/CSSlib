@@ -8,10 +8,10 @@
 CSSlib is an open-source code for building configuration search space (CSS) of disordered crystals, loading of the CSS dataset obtained, local/remote MPI or SLURM calculations and data visualization.
 
 ## Table of content 📋
-- [Installation](#installation)
-- [Contributors](#contributors)
-- [Tutorial](#tutorial)
-- [References & Citing](#references--citing)
+- [Installation](#installation-️)
+- [Contributors](#contributors-)
+- [Tutorial](#tutorial-ℹ️)
+- [References & Citing](#references--citing-)
 
 ## Installation 🛠️
 **CSSlib** can be installed through 
