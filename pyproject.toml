@@ -1,11 +1,12 @@
 [project]
 name = "csslib"
-version = "1.0.1"
+version = "1.2"
 authors = [
   { name="A.V. Krautsou" },
+  { name="A.A. Solovykh" },
 ]
 readme = "README.md"
-description = "CSSlib is an open-source code for building configuration search space (CSS) of disordered crystals."
+description = "CSSlib is an open-source code for building configuration search space (CSS) of disordered crystals, loading of the CSS dataset obtained, local/remote MPI or SLURM calculations and data visualization."
 requires-python = ">=3.10, <3.14"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -31,11 +32,14 @@ dependencies = [
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# [tool.setuptools]
-# packages = []
+[project.optional-dependencies]
+espresso = [
+    "pymatgen-io-espresso @ git+https://github.com/Griffin-Group/pymatgen-io-espresso"
+]
+all = [
+    "csslib[espresso]"
+]
 
-# [project.optional-dependencies]
-# dev = [
-#    "pytest",
-#    "mypy",
-#]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["csslib*", "tests*" ]

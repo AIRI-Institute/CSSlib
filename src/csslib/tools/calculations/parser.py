@@ -73,6 +73,6 @@ def default_espresso_parser(workdir: str, pwxml_kwargs: dict):
         return PWxml(xml_path, **pwxml_kwargs)
     except ImportError as exc:
         message = "Full Quantum Espresso parsing requires the pymatgen-io-espresso package. "
-        message += "Install it with: reinstall CSSlib as pip install csslib[espresso] or "
+        message += "Install it with: reinstall CSSlib as pip install csslib[espresso], pip install csslib[all] or "
         message += "install only extention as pip install git+https://github.com/Griffin-Group/pymatgen-io-espresso"
         raise ImportError(message) from exc
